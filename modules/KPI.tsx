@@ -1,20 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Unit, KPIData, KPI_KEYS, KPIKey } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { loadData, saveData } from '../utils/mockData';
 
 interface KPIProps {
   users: User[];
   units: Unit[];
 }
 
-// Generate random KPI data for demo
+// Generate random KPI data for demo fallback
 const generateKPI = (users: User[]): KPIData[] => {
     return users.map(u => {
         const targets: any = {};
         Object.keys(KPI_KEYS).forEach(key => {
             const target = Math.floor(Math.random() * 50) + 50;
-            const actual = Math.floor(Math.random() * target * 1.2); // Random performance
+            const actual = Math.floor(Math.random() * target * 1.2); 
             targets[key] = { target, actual };
         });
         return {
@@ -27,27 +29,48 @@ const generateKPI = (users: User[]): KPIData[] => {
 };
 
 const KPI: React.FC<KPIProps> = ({ users, units }) => {
-  const [activeTab, setActiveTab] = useState<'plan' | 'eval'>('plan');
+  const [activeTab, setActiveTab] = useState<'plan' | 'eval'>('eval'); // Default to evaluation view
   const [filterUnit, setFilterUnit] = useState<string>('all');
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
+  const [pasteModalOpen, setPasteModalOpen] = useState(false);
+  const [pasteContent, setPasteContent] = useState('');
   
-  // Use useMemo to simulate "Database" fetch
-  const kpiData = useMemo(() => generateKPI(users), [users]);
+  // State for KPI Data
+  const [kpiData, setKpiData] = useState<KPIData[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize data
+  useEffect(() => {
+    const savedData = loadData<KPIData[]>('kpi_data', []);
+    if (savedData.length > 0) {
+        setKpiData(savedData);
+    } else {
+        // Fallback to random data if nothing saved
+        const initial = generateKPI(users);
+        setKpiData(initial);
+        saveData('kpi_data', initial);
+    }
+  }, [users]);
+
+  // Save whenever data changes
+  useEffect(() => {
+      if (kpiData.length > 0) {
+          saveData('kpi_data', kpiData);
+      }
+  }, [kpiData]);
 
   // Filtering Logic
   const filteredData = kpiData.filter(item => {
       if (filterUnit !== 'all') {
-          // Check if item's unit is the selected unit OR a child of it
           const unit = units.find(u => u.id === item.unitId);
-          // Simple check: is exact unit or parent is selected unit
           if (item.unitId !== filterUnit && unit?.parentId !== filterUnit) return false;
       }
       return true;
   });
 
-  // Calculate completion % for the selected key
+  // Calculate stats for charts
   const chartData = filteredData.map(item => {
-      const t = item.targets[filterKey];
+      const t = item.targets[filterKey] || { target: 0, actual: 0 };
       const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
       return {
           name: item.fullName,
@@ -60,51 +83,224 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
   const top5 = chartData.slice(0, 5);
   const bottom5 = [...chartData].sort((a, b) => a.percent - b.percent).slice(0, 5);
 
+  // --- EXCEL HANDLING ---
+
+  const handleDownloadTemplate = () => {
+    // Create header row
+    const headers = ['HRM_CODE', 'HO_TEN', ...Object.keys(KPI_KEYS).map(k => `${k}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k}_ACTUAL`)];
+    
+    // Create sample rows from current users
+    const data = users.map(u => {
+        const row: any = { HRM_CODE: u.hrmCode, HO_TEN: u.fullName };
+        Object.keys(KPI_KEYS).forEach(k => {
+            row[`${k}_TARGET`] = 0;
+            row[`${k}_ACTUAL`] = 0;
+        });
+        return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "KPI_Template");
+    XLSX.writeFile(wb, "VNPT_KPI_Template.xlsx");
+  };
+
+  const processImportData = (jsonData: any[]) => {
+      if (!jsonData || jsonData.length === 0) return;
+
+      const newKpiData = [...kpiData];
+      let matchCount = 0;
+
+      jsonData.forEach((row: any) => {
+          // Normalize keys to uppercase for simpler matching
+          const normalizedRow: any = {};
+          Object.keys(row).forEach(k => normalizedRow[k.toUpperCase()] = row[k]);
+
+          const hrmCode = normalizedRow['HRM_CODE'];
+          if (!hrmCode) return;
+
+          // Find existing user KPI record or create temp structure
+          const userIndex = newKpiData.findIndex(k => k.hrmCode === String(hrmCode));
+          const user = users.find(u => u.hrmCode === String(hrmCode));
+          
+          if (user) {
+              matchCount++;
+              const targets: any = userIndex >= 0 ? { ...newKpiData[userIndex].targets } : {};
+              
+              Object.keys(KPI_KEYS).forEach(key => {
+                  const targetKey = `${key.toUpperCase()}_TARGET`;
+                  const actualKey = `${key.toUpperCase()}_ACTUAL`;
+                  
+                  // Only update if column exists in excel
+                  if (targetKey in normalizedRow) {
+                      if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                      targets[key].target = Number(normalizedRow[targetKey]) || 0;
+                  }
+                  if (actualKey in normalizedRow) {
+                      if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                      targets[key].actual = Number(normalizedRow[actualKey]) || 0;
+                  }
+              });
+
+              const record: KPIData = {
+                  hrmCode: user.hrmCode,
+                  fullName: user.fullName,
+                  unitId: user.unitId,
+                  targets: targets
+              };
+
+              if (userIndex >= 0) {
+                  newKpiData[userIndex] = record;
+              } else {
+                  newKpiData.push(record);
+              }
+          }
+      });
+
+      setKpiData(newKpiData);
+      alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} nhân sự.`);
+      setActiveTab('eval'); // Switch to view results
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: 'binary' });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          const data = XLSX.utils.sheet_to_json(ws);
+          processImportData(data);
+      };
+      reader.readAsBinaryString(file);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handlePasteData = () => {
+     // Parse tab-separated values (Excel/Google Sheets copy format)
+     const rows = pasteContent.trim().split('\n');
+     if (rows.length < 2) {
+         alert("Dữ liệu không hợp lệ. Vui lòng bao gồm cả dòng tiêu đề.");
+         return;
+     }
+
+     const headers = rows[0].split('\t').map(h => h.trim());
+     const result = [];
+     
+     for (let i = 1; i < rows.length; i++) {
+         const obj: any = {};
+         const currentline = rows[i].split('\t');
+         
+         headers.forEach((header, index) => {
+             obj[header] = currentline[index]?.trim();
+         });
+         result.push(obj);
+     }
+     
+     processImportData(result);
+     setPasteModalOpen(false);
+     setPasteContent('');
+  };
+
   return (
-    <div className="space-y-6">
-       <div className="flex justify-between items-end">
+    <div className="space-y-6 animate-fade-in">
+       <div className="flex flex-col md:flex-row justify-between items-end gap-4">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Bộ chỉ số điều hành</h2>
             <p className="text-sm text-slate-500">Giao kế hoạch và đánh giá BSC/KPI nhân viên</p>
           </div>
           <div className="flex bg-slate-200 p-1 rounded-lg">
-            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Giao kế hoạch</button>
-            <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá</button>
+            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Import)</button>
+            <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá & Báo cáo</button>
           </div>
        </div>
 
        {activeTab === 'plan' && (
-         <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4"><FileUp size={32} /></div>
-              <h3 className="text-xl font-bold text-slate-800 mb-2">Import Dữ liệu Kế hoạch</h3>
-              <p className="text-slate-500 mb-6">Tải lên file Excel (.xlsx) chứa chỉ tiêu. Trường khóa là <strong>Mã HRM</strong>.</p>
-              
-              <div className="bg-slate-50 border p-4 rounded-lg max-w-2xl mx-auto text-left mb-6 font-mono text-xs">
-                  <div className="font-bold text-slate-700 mb-2">Mẫu file Excel (Header):</div>
-                  <div className="bg-white border p-2 text-slate-500">HRM_CODE, FIBER_TARGET, MYTV_TARGET, MESH_TARGET, ...</div>
-              </div>
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             {/* Left: Actions */}
+             <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center flex flex-col items-center justify-center min-h-[400px]">
+                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4"><FileUp size={32} /></div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập dữ liệu KPI</h3>
+                  <p className="text-slate-500 mb-6 max-w-sm">Hỗ trợ file Excel (.xlsx) hoặc copy trực tiếp từ Google Sheet. Yêu cầu trường khóa là <strong>HRM_CODE</strong>.</p>
+                  
+                  <div className="flex flex-col gap-3 w-full max-w-xs">
+                      <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          onChange={handleFileUpload} 
+                          className="hidden" 
+                          accept=".xlsx, .xls" 
+                      />
+                      
+                      <button 
+                        onClick={() => fileInputRef.current?.click()} 
+                        className="bg-blue-600 text-white px-4 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center gap-2 shadow-md transition-transform active:scale-95"
+                      >
+                          <FileSpreadsheet size={20} /> Chọn File Excel
+                      </button>
 
-              <div className="flex gap-4 justify-center">
-                  <button className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700">Chọn File Excel</button>
-                  <button className="bg-white border border-slate-300 text-slate-700 px-6 py-2 rounded-lg font-bold hover:bg-slate-50">Kết nối Google Sheet</button>
-              </div>
+                      <button 
+                        onClick={() => setPasteModalOpen(true)}
+                        className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-3 rounded-lg font-bold hover:bg-slate-50 flex items-center justify-center gap-2"
+                      >
+                          <ClipboardPaste size={20} /> Paste từ Google Sheet
+                      </button>
+
+                      <div className="my-2 border-t w-full"></div>
+
+                      <button 
+                        onClick={handleDownloadTemplate}
+                        className="text-slate-500 hover:text-blue-600 text-sm flex items-center justify-center gap-2"
+                      >
+                          <Download size={16} /> Tải file mẫu chuẩn
+                      </button>
+                  </div>
+             </div>
+
+             {/* Right: Guide */}
+             <div className="bg-slate-50 p-8 rounded-xl border border-slate-200">
+                <h4 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2"><AlertOctagon size={20} className="text-orange-500"/> Hướng dẫn định dạng</h4>
+                <ul className="space-y-3 text-sm text-slate-600 list-disc pl-5">
+                    <li>Dòng đầu tiên của file phải là dòng tiêu đề (Header).</li>
+                    <li>Bắt buộc có cột <strong>HRM_CODE</strong> để định danh nhân viên.</li>
+                    <li>Với mỗi chỉ số (Ví dụ: Fiber), cần 2 cột tương ứng:
+                        <ul className="list-circle pl-5 mt-1 text-slate-500">
+                            <li><code>FIBER_TARGET</code> (Chỉ tiêu giao)</li>
+                            <li><code>FIBER_ACTUAL</code> (Thực hiện được)</li>
+                        </ul>
+                    </li>
+                    <li>Các mã chỉ số hỗ trợ:
+                        <div className="grid grid-cols-2 gap-2 mt-2 font-mono text-xs bg-white p-2 rounded border">
+                           {Object.keys(KPI_KEYS).map(k => <div key={k}><span className="font-bold">{k.toUpperCase()}</span>_TARGET</div>)}
+                        </div>
+                    </li>
+                </ul>
+             </div>
          </div>
        )}
 
        {activeTab === 'eval' && (
          <div className="space-y-6">
             {/* Filters */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border flex flex-wrap gap-4 items-center">
-               <div className="flex items-center gap-2 text-sm text-slate-600 font-bold"><Filter size={16} /> Lọc dữ liệu:</div>
-               
-               <select className="border rounded-lg px-3 py-1.5 text-sm" value={filterUnit} onChange={e => setFilterUnit(e.target.value)}>
-                   <option value="all">Tất cả đơn vị</option>
-                   {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-               </select>
+            <div className="bg-white p-4 rounded-xl shadow-sm border flex flex-wrap gap-4 items-center justify-between">
+               <div className="flex gap-4 items-center">
+                    <div className="flex items-center gap-2 text-sm text-slate-600 font-bold"><Filter size={16} /> Lọc:</div>
+                    <select className="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={filterUnit} onChange={e => setFilterUnit(e.target.value)}>
+                        <option value="all">-- Tất cả đơn vị --</option>
+                        {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
 
-               <select className="border rounded-lg px-3 py-1.5 text-sm bg-blue-50 text-blue-700 font-medium" value={filterKey} onChange={e => setFilterKey(e.target.value as KPIKey)}>
-                   {Object.entries(KPI_KEYS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-               </select>
+                    <select className="border rounded-lg px-3 py-1.5 text-sm bg-blue-50 text-blue-700 font-medium outline-none focus:ring-2 focus:ring-blue-500" value={filterKey} onChange={e => setFilterKey(e.target.value as KPIKey)}>
+                        {Object.entries(KPI_KEYS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+               </div>
+               <div className="text-sm text-slate-500 italic">
+                   Dữ liệu được lưu tự động
+               </div>
             </div>
 
             {/* Charts Row */}
@@ -114,24 +310,26 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
                  <div className="h-64">
                    <ResponsiveContainer width="100%" height="100%">
                      <BarChart data={top5} layout="vertical" margin={{left: 40}}>
+                       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                        <XAxis type="number" hide />
                        <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} />
-                       <Tooltip cursor={{fill: 'transparent'}} />
-                       <Bar dataKey="percent" fill="#22c55e" barSize={15} radius={[0, 4, 4, 0]} name="% Hoàn thành" label={{ position: 'right', fill: '#666', fontSize: 10 }} />
+                       <Tooltip cursor={{fill: '#f0fdf4'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
+                       <Bar dataKey="percent" fill="#22c55e" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                      </BarChart>
                    </ResponsiveContainer>
                  </div>
                </div>
 
                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                  <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><AlertOctagon size={20}/> Top 5 Nhân viên Cần cố gắng</h3>
+                  <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><AlertOctagon size={20}/> Top 5 Cần cố gắng</h3>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={bottom5} layout="vertical" margin={{left: 40}}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" hide />
                         <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} />
-                        <Tooltip cursor={{fill: 'transparent'}} />
-                        <Bar dataKey="percent" fill="#ef4444" barSize={15} radius={[0, 4, 4, 0]} name="% Hoàn thành" label={{ position: 'right', fill: '#666', fontSize: 10 }} />
+                        <Tooltip cursor={{fill: '#fef2f2'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
+                        <Bar dataKey="percent" fill="#ef4444" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -140,7 +338,10 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
 
             {/* Detailed Table */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-               <div className="p-4 border-b bg-slate-50"><h3 className="font-bold text-slate-800">Bảng chi tiết số liệu: {KPI_KEYS[filterKey]}</h3></div>
+               <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                   <h3 className="font-bold text-slate-800">Chi tiết số liệu: {KPI_KEYS[filterKey]}</h3>
+                   <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">Key: {filterKey}</span>
+               </div>
                <div className="overflow-x-auto">
                  <table className="w-full text-sm text-left">
                    <thead className="bg-slate-100 text-slate-700 font-bold">
@@ -154,31 +355,64 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-100">
-                     {filteredData.map((item, index) => {
-                         const target = item.targets[filterKey].target;
-                         const actual = item.targets[filterKey].actual;
-                         const percent = target ? (actual / target) * 100 : 0;
+                     {filteredData.length > 0 ? filteredData.map((item, index) => {
+                         const targetData = item.targets[filterKey] || { target: 0, actual: 0 };
+                         const percent = targetData.target ? (targetData.actual / targetData.target) * 100 : 0;
                          const unitName = units.find(u => u.id === item.unitId)?.name;
                          return (
                            <tr key={index} className="hover:bg-slate-50">
-                             <td className="p-3 font-medium">{item.fullName}</td>
+                             <td className="p-3">
+                                 <div className="font-medium text-slate-800">{item.fullName}</div>
+                                 <div className="text-xs text-slate-400">{item.hrmCode}</div>
+                             </td>
                              <td className="p-3 text-slate-500 text-xs">{unitName}</td>
-                             <td className="p-3 text-right font-mono">{target.toLocaleString()}</td>
-                             <td className="p-3 text-right font-mono font-bold text-blue-700">{actual.toLocaleString()}</td>
+                             <td className="p-3 text-right font-mono">{targetData.target.toLocaleString()}</td>
+                             <td className="p-3 text-right font-mono font-bold text-blue-700">{targetData.actual.toLocaleString()}</td>
                              <td className="p-3 text-center">
-                                 <span className={`px-2 py-1 rounded text-xs text-white ${percent >= 100 ? 'bg-green-500' : percent >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}>
+                                 <span className={`px-2 py-1 rounded text-xs font-bold text-white inline-block w-16 ${percent >= 100 ? 'bg-green-500' : percent >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}>
                                      {percent.toFixed(1)}%
                                  </span>
                              </td>
-                             <td className="p-3 text-center text-xs">{percent >= 100 ? 'Đạt' : 'Chưa đạt'}</td>
+                             <td className="p-3 text-center text-xs font-medium">
+                                 {percent >= 100 ? <span className="text-green-600">Đạt</span> : <span className="text-red-500">Chưa đạt</span>}
+                             </td>
                            </tr>
                          )
-                     })}
+                     }) : (
+                         <tr><td colSpan={6} className="p-8 text-center text-slate-400">Không có dữ liệu phù hợp. Hãy Import file Excel hoặc kiểm tra bộ lọc.</td></tr>
+                     )}
                    </tbody>
                  </table>
                </div>
             </div>
          </div>
+       )}
+
+       {/* Paste Data Modal */}
+       {pasteModalOpen && (
+           <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+               <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl overflow-hidden animate-fade-in">
+                   <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                       <h3 className="font-bold text-lg">Paste dữ liệu từ Excel/Google Sheet</h3>
+                       <button onClick={() => setPasteModalOpen(false)}><span className="text-2xl">&times;</span></button>
+                   </div>
+                   <div className="p-4">
+                       <p className="text-sm text-slate-500 mb-2">Copy vùng dữ liệu từ Google Sheet (bao gồm cả dòng tiêu đề) và dán vào bên dưới:</p>
+                       <textarea 
+                           className="w-full h-64 border rounded-lg p-3 font-mono text-xs bg-slate-50"
+                           placeholder={`HRM_CODE\tFIBER_TARGET\tFIBER_ACTUAL\nVNPT001\t50\t45\n...`}
+                           value={pasteContent}
+                           onChange={e => setPasteContent(e.target.value)}
+                       ></textarea>
+                   </div>
+                   <div className="p-4 border-t flex justify-end gap-3">
+                       <button onClick={() => setPasteModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Hủy bỏ</button>
+                       <button onClick={handlePasteData} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2">
+                           <Save size={18} /> Xử lý dữ liệu
+                       </button>
+                   </div>
+               </div>
+           </div>
        )}
     </div>
   );
