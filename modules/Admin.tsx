@@ -69,13 +69,12 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return code;
   };
 
-  // --- LOGIC IMPORT EXCEL (WITH MD5) ---
-  
+  // --- LOGIC IMPORT EXCEL (FIXED MD5) ---
   const handleDownloadTemplate = () => {
       const headers = ['HRM_CODE', 'FULL_NAME', 'EMAIL', 'USERNAME', 'PASSWORD', 'TITLE', 'UNIT_CODE'];
       const sampleData = [
           ['VNPT001', 'Nguyễn Văn A', 'vana@vnpt.vn', 'vana', '123456', 'Nhân viên', 'VNPT_QN'],
-          ['VNPT002', 'Trần Thị B', 'thib@vnpt.vn', 'thib', '123456', 'Trưởng phòng', 'QNH001']
+          ['VNPT002', 'Trần Thị B', 'thib@vnpt.vn', 'thib', '123456', 'Trưởng phòng', 'VNPT_QN']
       ];
       
       const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
@@ -119,8 +118,13 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       return;
                   }
 
-                  const rawPassword = String(row['PASSWORD'] || '123456');
-                  const hashedPassword = md5(rawPassword); // HASH MD5
+                  // FIX: Ép kiểu String trước khi hash để tránh lỗi số học
+                  let rawPassword = '123456'; // Default
+                  if (row['PASSWORD'] !== undefined && row['PASSWORD'] !== null && String(row['PASSWORD']).trim() !== '') {
+                      rawPassword = String(row['PASSWORD']);
+                  }
+                  
+                  const hashedPassword = md5(rawPassword); 
 
                   newUsersPayload.push({
                       hrm_code: String(hrmCode),
@@ -225,7 +229,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             
             // Only update password if create new
             if (!editingItem) {
-                 dbUser.password = md5(formData.password); // Hash password when creating
+                 dbUser.password = md5(String(formData.password)); // Ensure String
                  dbUser.is_first_login = true;
             }
 
@@ -233,7 +237,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 const { username, password, ...updatePayload } = dbUser; // Don't update password/username here
                 const { error } = await supabase.from('users').update(updatePayload).eq('id', editingItem.id);
                 if (error) throw error;
-                const updatedUser = { ...editingItem, ...formData }; // Optimistic update
+                const updatedUser = { ...editingItem, ...formData }; 
                 setUsers(users.map(u => u.id === editingItem.id ? updatedUser : u));
             } else {
                 const { data, error } = await supabase.from('users').insert([dbUser]).select();
@@ -356,6 +360,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
   return (
     <div className="space-y-6">
       {isProcessing && <div className="fixed inset-0 z-[70] bg-white/50 flex items-center justify-center"><Loader2 className="animate-spin text-blue-600 w-10 h-10"/></div>}
+      {/* ... (Giữ nguyên phần render UI Header) ... */}
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-slate-800">Quản trị hệ thống</h2>
         <div className="flex bg-slate-200 p-1 rounded-lg">
@@ -446,7 +451,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                           <ul className="list-disc pl-5 space-y-1">
                               <li>Sử dụng đúng <strong>File mẫu chuẩn</strong> để tránh lỗi.</li>
                               <li>Cột <strong>UNIT_CODE</strong> phải khớp với Mã đơn vị đã khai báo.</li>
-                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong> (Sẽ được mã hóa MD5).</li>
+                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong> (Hệ thống sẽ tự mã hóa).</li>
                           </ul>
                       </div>
                   </div>
@@ -460,14 +465,16 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           </div>
       )}
 
-      {/* Add/Edit Modal */}
+      {/* Add/Edit Modal (UI giữ nguyên như trước, logic save đã update ở trên) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto">
+             {/* ... Form Header ... */}
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-lg">{editingItem ? 'Cập nhật' : 'Thêm mới'} {activeTab === 'units' ? 'Đơn vị' : 'Nhân sự'}</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
+             {/* ... Form Body (Giữ nguyên các field input) ... */}
             <div className="p-6 space-y-4">
               {activeTab === 'units' ? (
                 <>
@@ -552,6 +559,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 </>
               )}
             </div>
+            {/* ... Form Footer ... */}
             <div className="p-4 border-t bg-slate-50 flex justify-end gap-3">
               <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-200">Hủy</button>
               <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2">

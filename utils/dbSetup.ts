@@ -1,12 +1,12 @@
 
 export const SQL_SETUP_SCRIPT = `
--- 1. XÓA DỮ LIỆU CŨ (RESET) ĐỂ TRÁNH LỖI ID
+-- 1. XÓA SẠCH DỮ LIỆU CŨ (RESET HOÀN TOÀN)
 TRUNCATE TABLE tasks, users, units RESTART IDENTITY CASCADE;
 
 -- 2. Bật Extension UUID
 create extension if not exists "uuid-ossp";
 
--- 3. Tạo lại bảng nếu chưa có (Giữ nguyên cấu trúc)
+-- 3. Tạo bảng (Nếu chưa có)
 create table if not exists units (
   id uuid default uuid_generate_v4() primary key,
   code text not null,
@@ -47,11 +47,11 @@ create table if not exists tasks (
   primary_ids text[] default '{}',
   support_ids text[] default '{}',
   project_id text,
-  ext_request jsonb,
+  ext_request jsonb, -- Chứa thông tin xin gia hạn {date, reason, status}
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 4. Cấp quyền truy cập (RLS)
+-- 4. Cấp quyền truy cập (RLS - Cho phép tất cả để đơn giản hóa demo)
 alter table units enable row level security;
 drop policy if exists "Allow All Units" on units;
 create policy "Allow All Units" on units for all using (true) with check (true);
@@ -64,18 +64,17 @@ alter table tasks enable row level security;
 drop policy if exists "Allow All Tasks" on tasks;
 create policy "Allow All Tasks" on tasks for all using (true) with check (true);
 
--- 5. KHỞI TẠO DỮ LIỆU CHUẨN (SEEDING)
+-- 5. KHỞI TẠO DỮ LIỆU: CHỈ TẠO 1 ĐƠN VỊ GỐC VÀ 1 ADMIN
 DO $$
 DECLARE
   rootId uuid;
 BEGIN
-  -- Tạo Unit Gốc
+  -- Tạo Unit Gốc VNPT Quảng Ninh
   INSERT INTO units (code, name, level, address) 
-  VALUES ('VNPT_QN', 'VNPT Quảng Ninh (Gốc)', 0, '20 Lê Thánh Tông') 
+  VALUES ('VNPT_QN', 'VNPT Quảng Ninh', 0, '20 Lê Thánh Tông') 
   RETURNING id INTO rootId;
 
-  -- Tạo User Admin ngay lập tức với ID vừa tạo
-  -- PASSWORD LÀ MD5 CỦA '123' -> 202cb962ac59075b964b07152d234b70
+  -- Tạo User Admin (Mật khẩu 123 -> MD5: 202cb962ac59075b964b07152d234b70)
   INSERT INTO users (hrm_code, full_name, email, username, password, title, unit_id, can_manage, is_first_login)
   VALUES ('ADMIN', 'Quản Trị Viên (System)', 'admin@vnpt.vn', 'admin', '202cb962ac59075b964b07152d234b70', 'Giám đốc', rootId, true, false);
 END $$;

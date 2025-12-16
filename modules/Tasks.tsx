@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Task, TaskStatus, TaskPriority, User, Unit, ExtensionRequest } from '../types';
-import { Calendar, LayoutList, Plus, Search, MoreHorizontal, User as UserIcon, Clock, AlertTriangle, CheckCircle, X, Edit2, Trash2, Save, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { supabase } from '../utils/supabaseClient'; // Import Supabase
+import { Calendar, LayoutList, Plus, Search, MoreHorizontal, User as UserIcon, Clock, AlertTriangle, CheckCircle, X, Edit2, Trash2, Save, ChevronLeft, ChevronRight, Loader2, ArrowRight } from 'lucide-react';
+import { supabase } from '../utils/supabaseClient'; 
 
 interface TasksProps {
   tasks: Task[];
@@ -36,8 +36,14 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
   const [isProcessing, setIsProcessing] = useState(false);
   
   // Extension State
+  const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [extensionReason, setExtensionReason] = useState('');
   const [extensionDate, setExtensionDate] = useState('');
+
+  // Update State Buffer
+  const [tempProgress, setTempProgress] = useState(0);
+  const [tempStatus, setTempStatus] = useState<TaskStatus>(TaskStatus.PENDING);
+  const [hasChanges, setHasChanges] = useState(false);
 
   // Form State (Create & Edit)
   const [taskForm, setTaskForm] = useState<Partial<Task>>({
@@ -55,6 +61,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
     setExtensionReason('');
     setExtensionDate('');
     setIsEditingTask(false);
+    setIsExtensionModalOpen(false);
   };
 
   const openCreateModal = () => {
@@ -62,7 +69,18 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       setShowCreateForm(true);
   };
 
-  // --- LOGIC GIAO VIỆC MỚI (LƯU DB) ---
+  // --- QUYỀN TRUY CẬP ---
+  const isAssigner = selectedTask ? (currentUser.id === selectedTask.assignerId || currentUser.hrmCode === 'ADMIN') : false;
+  const isPrimaryAssignee = selectedTask ? selectedTask.primaryAssigneeIds.includes(currentUser.id) : false;
+
+  useEffect(() => {
+      if (selectedTask) {
+          setTempProgress(selectedTask.progress);
+          setTempStatus(selectedTask.status);
+          setHasChanges(false);
+      }
+  }, [selectedTask]);
+
   const handleCreateTask = async () => {
     if (!taskForm.name || !taskForm.deadline) return alert("Vui lòng nhập tên công việc và hạn hoàn thành");
     setIsProcessing(true);
@@ -106,27 +124,37 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
     }
   };
 
-  // --- LOGIC CẬP NHẬT TRẠNG THÁI (LƯU DB) ---
-  const handleUpdateStatus = async (taskId: string, status: TaskStatus, progress: number) => {
-    const newProgress = status === TaskStatus.COMPLETED ? 100 : progress;
-    
-    // Update Local State Optimistically
-    const oldTasks = [...tasks];
-    setTasks(tasks.map(t => t.id === taskId ? { ...t, status, progress: newProgress } : t));
-    
-    // Update DB
-    const { error } = await supabase.from('tasks').update({ status, progress: newProgress }).eq('id', taskId);
-    if (error) {
-        alert("Lỗi cập nhật: " + error.message);
-        setTasks(oldTasks); // Revert if failed
-    } else {
-        if (selectedTask && selectedTask.id === taskId) {
-            setSelectedTask({ ...selectedTask, status, progress: newProgress });
-        }
-    }
+  // --- NÚT CẬP NHẬT KẾT QUẢ (CONFIRMATION) ---
+  const handleConfirmUpdate = async () => {
+      if (!selectedTask) return;
+      if (!confirm("Bạn có chắc chắn muốn cập nhật kết quả thực hiện này không?")) return;
+      
+      setIsProcessing(true);
+      try {
+          const newProgress = tempStatus === TaskStatus.COMPLETED ? 100 : tempProgress;
+          const { error } = await supabase.from('tasks').update({ status: tempStatus, progress: newProgress }).eq('id', selectedTask.id);
+          
+          if (error) throw error;
+          
+          const updatedTask = { ...selectedTask, status: tempStatus, progress: newProgress };
+          setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+          setSelectedTask(updatedTask);
+          setHasChanges(false);
+          alert("Đã cập nhật kết quả thành công!");
+      } catch (err: any) {
+          alert("Lỗi cập nhật: " + err.message);
+      } finally {
+          setIsProcessing(false);
+      }
   };
 
-  // --- LOGIC LƯU SỬA CÔNG VIỆC ---
+  // --- LOGIC GIAO DIỆN CẬP NHẬT TRẠNG THÁI ---
+  const handleTempChange = (field: 'status' | 'progress', value: any) => {
+      if (field === 'status') setTempStatus(value);
+      if (field === 'progress') setTempProgress(parseInt(value));
+      setHasChanges(true);
+  };
+
   const handleSaveEdit = async () => {
       if (!selectedTask || !taskForm.name) return;
       setIsProcessing(true);
@@ -156,6 +184,61 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       }
   };
 
+  // --- LOGIC GIA HẠN (EXTENSION) ---
+  const handleRequestExtension = async () => {
+      if (!selectedTask || !extensionDate || !extensionReason) return alert("Vui lòng nhập đầy đủ thông tin.");
+      setIsProcessing(true);
+      
+      const requestPayload = {
+          requestDate: new Date().toISOString(),
+          requestedDate: new Date(extensionDate).toISOString(),
+          reason: extensionReason,
+          status: 'pending'
+      };
+
+      try {
+           const { error } = await supabase.from('tasks').update({ ext_request: requestPayload }).eq('id', selectedTask.id);
+           if (error) throw error;
+           
+           const updatedTask: Task = { ...selectedTask, extensionRequest: requestPayload as any };
+           setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+           setSelectedTask(updatedTask);
+           setIsExtensionModalOpen(false);
+           alert("Đã gửi yêu cầu gia hạn!");
+      } catch(err: any) {
+          alert("Lỗi: " + err.message);
+      } finally {
+          setIsProcessing(false);
+      }
+  };
+
+  const handleApproveExtension = async (approved: boolean) => {
+      if (!selectedTask || !selectedTask.extensionRequest) return;
+      if (!confirm(approved ? "Bạn đồng ý gia hạn?" : "Bạn từ chối yêu cầu này?")) return;
+      
+      setIsProcessing(true);
+      const newExtStatus = approved ? 'approved' : 'rejected';
+      const newDeadline = approved ? selectedTask.extensionRequest.requestedDate : selectedTask.deadline;
+      
+      const newExtRequest = { ...selectedTask.extensionRequest, status: newExtStatus };
+
+      try {
+          const { error } = await supabase.from('tasks')
+            .update({ deadline: newDeadline, ext_request: newExtRequest })
+            .eq('id', selectedTask.id);
+          
+          if (error) throw error;
+
+          const updatedTask = { ...selectedTask, deadline: newDeadline, extensionRequest: newExtRequest };
+          setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+          setSelectedTask(updatedTask as Task);
+      } catch(err: any) {
+          alert("Lỗi xử lý: " + err.message);
+      } finally {
+          setIsProcessing(false);
+      }
+  };
+
   const handleDeleteTask = async (taskId: string) => {
       if (!confirm("Bạn có chắc chắn muốn xóa công việc này không?")) return;
       try {
@@ -168,26 +251,19 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       }
   };
 
-  // ... (Giữ nguyên logic Timeline và UI render)
+  // ... (UI Helper: Toggle Selection, Timeline calc -> Giữ nguyên)
   const toggleSelection = (id: string, field: 'primaryAssigneeIds' | 'supportAssigneeIds') => {
       const current = taskForm[field] || [];
       const updated = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
       setTaskForm({ ...taskForm, [field]: updated });
   };
-
-  const isTaskOwner = selectedTask 
-    ? (currentUser.id === selectedTask.assignerId || currentUser.hrmCode === 'ADMIN') 
-    : false;
-    
+  
   const handleStartEdit = () => {
       if (!selectedTask) return;
-      setTaskForm({
-          ...selectedTask
-      });
+      setTaskForm({ ...selectedTask });
       setIsEditingTask(true);
   };
   
-  // Logic Timeline (Giữ nguyên)
   const dayWidth = 40;
   const daysToRender = 30; 
   const getDaysArray = () => {
@@ -251,7 +327,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                          <tr key={task.id} className="hover:bg-blue-50/30 cursor-pointer transition-colors" onClick={() => { setSelectedTask(task); setIsEditingTask(false); }}>
                             <td className="px-4 py-3 font-medium text-slate-800">
                                 {task.name}
-                                {task.extensionRequest?.status === 'pending' && <span className="ml-2 text-xs bg-orange-100 text-orange-600 px-1 rounded">Xin gia hạn</span>}
+                                {task.extensionRequest?.status === 'pending' && <span className="ml-2 text-[10px] font-bold bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded border border-orange-200 animate-pulse">XIN GIA HẠN</span>}
                             </td>
                             <td className="px-4 py-3 text-slate-600">{assigner?.fullName}</td>
                             <td className="px-4 py-3 text-slate-600 font-medium">{primaries}</td>
@@ -267,6 +343,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                          </tr>
                        )
                    })}
+                   {tasks.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">Chưa có công việc nào.</td></tr>}
                 </tbody>
               </table>
           </div>
@@ -386,7 +463,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
         </div>
       )}
 
-      {/* DETAIL POPUP (Giữ nguyên logic Edit/Delete) */}
+      {/* DETAIL POPUP */}
       {selectedTask && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden animate-fade-in flex flex-col max-h-[95vh]">
@@ -396,7 +473,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                             <h2 className="text-xl font-bold text-slate-800">
                                 {isEditingTask ? "Chỉnh sửa công việc" : selectedTask.name}
                             </h2>
-                            {isTaskOwner && !isEditingTask && (
+                            {isAssigner && !isEditingTask && (
                                 <div className="flex gap-2">
                                     <button onClick={handleStartEdit} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-2 text-sm font-bold">
                                         <Edit2 size={16} /> <span className="hidden sm:inline">Sửa</span>
@@ -420,7 +497,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                 <div className="flex-1 overflow-y-auto p-6">
                     {isEditingTask ? (
                          <div className="space-y-4">
-                             {/* Form Edit tương tự Form Create */}
+                             {/* Form Edit */}
                              <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
                                     <label className="block text-sm font-medium mb-1">Tên công việc</label>
@@ -439,7 +516,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                                     <select className="w-full border rounded-lg p-2.5" value={taskForm.type} onChange={e => setTaskForm({...taskForm, type: e.target.value as any})}><option value="Single">Giao việc lẻ</option><option value="Project">Dự án</option></select>
                                 </div>
                                 <div className="col-span-2 grid grid-cols-2 gap-4">
-                                    {/* Assignee Selection Reuse */}
                                     <div className="border p-3 rounded-lg max-h-40 overflow-y-auto">
                                         <div className="text-sm font-bold mb-2 text-blue-700">Người chủ trì</div>
                                         {users.map(u => <label key={`p-${u.id}`} className="flex items-center gap-2 text-sm py-1 hover:bg-slate-50"><input type="checkbox" checked={taskForm.primaryAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'primaryAssigneeIds')} />{u.fullName}</label>)}
@@ -464,33 +540,109 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                                     <h4 className="font-bold text-sm text-slate-700 mb-2">Nội dung thực hiện</h4>
                                     <p className="text-slate-600 whitespace-pre-wrap">{selectedTask.content}</p>
                                 </div>
-                                {/* Staff Update Status */}
-                                {!isTaskOwner && (
-                                    <div className="border rounded-lg p-4 bg-white shadow-sm">
-                                        <h4 className="font-bold text-sm text-slate-700 mb-4">Cập nhật tiến độ</h4>
-                                        <div className="flex items-center gap-4">
-                                            <select className="border rounded px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" value={selectedTask.status} onChange={(e) => handleUpdateStatus(selectedTask.id, e.target.value as TaskStatus, selectedTask.progress)}>{Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}</select>
-                                            <input type="range" min="0" max="100" value={selectedTask.progress} onChange={(e) => handleUpdateStatus(selectedTask.id, selectedTask.status, parseInt(e.target.value))} className="flex-1 accent-blue-600"/>
-                                            <span className="font-bold w-12 text-right">{selectedTask.progress}%</span>
+                                
+                                {/* UPDATE PROGRESS (Only for Primary Assignee) */}
+                                {isPrimaryAssignee ? (
+                                    <div className="border-2 border-blue-100 rounded-xl p-4 bg-blue-50/50 shadow-sm animate-fade-in">
+                                        <h4 className="font-bold text-sm text-blue-800 mb-4 flex items-center gap-2"><Edit2 size={16}/> Cập nhật kết quả (Dành cho người chủ trì)</h4>
+                                        <div className="flex items-center gap-4 mb-4">
+                                            <div className="w-1/3">
+                                                <label className="text-xs font-bold text-slate-500 mb-1 block">Trạng thái</label>
+                                                <select className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white" value={tempStatus} onChange={(e) => handleTempChange('status', e.target.value as TaskStatus)}>
+                                                    {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="text-xs font-bold text-slate-500 mb-1 block">Tiến độ (%)</label>
+                                                <div className="flex items-center gap-3">
+                                                    <input type="range" min="0" max="100" value={tempProgress} onChange={(e) => handleTempChange('progress', e.target.value)} className="flex-1 accent-blue-600 h-2 bg-slate-200 rounded-lg cursor-pointer"/>
+                                                    <span className="font-bold w-12 text-right text-blue-700">{tempProgress}%</span>
+                                                </div>
+                                            </div>
                                         </div>
+                                        {hasChanges && (
+                                            <div className="flex justify-end">
+                                                <button onClick={handleConfirmUpdate} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 shadow-md flex items-center gap-2">
+                                                    {isProcessing ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu kết quả
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 text-center text-slate-500 italic text-sm">
+                                        Chỉ người chủ trì mới có quyền cập nhật tiến độ công việc này.
                                     </div>
                                 )}
                             </div>
+
+                            {/* RIGHT SIDEBAR */}
                             <div className="space-y-4">
                                 <div className="border p-4 rounded-lg bg-slate-50">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Trạng thái hiện tại</h4>
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Tiến độ hiện tại</h4>
                                     <div className="flex items-center gap-2 mb-2"><span className={`px-3 py-1 rounded-full text-xs font-bold border ${statusColors[selectedTask.status]}`}>{selectedTask.status}</span></div>
                                     <div className="w-full bg-slate-200 rounded-full h-2.5 mb-1"><div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${selectedTask.progress}%`}}></div></div>
                                     <div className="text-right text-xs font-bold text-blue-700">{selectedTask.progress}%</div>
                                 </div>
-                                {/* Assignee List */}
-                                <div className="border p-4 rounded-lg"><h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người chủ trì</h4>{selectedTask.primaryAssigneeIds.map(id => <div key={id} className="text-sm">{users.find(x => x.id === id)?.fullName}</div>)}</div>
+                                <div className="border p-4 rounded-lg"><h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người chủ trì</h4>{selectedTask.primaryAssigneeIds.map(id => <div key={id} className="text-sm font-medium text-slate-800 flex items-center gap-2"><UserIcon size={12}/>{users.find(x => x.id === id)?.fullName}</div>)}</div>
+                                
+                                {/* EXTENSION REQUEST UI */}
+                                <div className="border p-4 rounded-lg bg-orange-50 border-orange-100">
+                                    <h4 className="text-xs font-bold text-orange-600 uppercase mb-2">Gia hạn Deadline</h4>
+                                    
+                                    {selectedTask.extensionRequest?.status === 'pending' ? (
+                                        <div className="text-sm">
+                                            <div className="bg-white p-2 rounded border border-orange-200 mb-2">
+                                                <div className="font-bold text-slate-700">Yêu cầu gia hạn:</div>
+                                                <div>Ngày mới: {new Date(selectedTask.extensionRequest.requestedDate).toLocaleDateString('vi-VN')}</div>
+                                                <div className="italic text-slate-500 text-xs">"{selectedTask.extensionRequest.reason}"</div>
+                                            </div>
+                                            
+                                            {isAssigner ? (
+                                                <div className="flex gap-2 mt-2">
+                                                    <button onClick={() => handleApproveExtension(true)} className="flex-1 bg-green-600 text-white text-xs py-1.5 rounded hover:bg-green-700 font-bold">Duyệt</button>
+                                                    <button onClick={() => handleApproveExtension(false)} className="flex-1 bg-red-600 text-white text-xs py-1.5 rounded hover:bg-red-700 font-bold">Từ chối</button>
+                                                </div>
+                                            ) : (
+                                                <div className="text-xs text-orange-600 font-bold text-center mt-2">Đang chờ phê duyệt...</div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        isPrimaryAssignee && selectedTask.status !== TaskStatus.COMPLETED && (
+                                            <button onClick={() => setIsExtensionModalOpen(true)} className="w-full bg-white border border-orange-300 text-orange-600 text-xs font-bold py-2 rounded hover:bg-orange-50">
+                                                Xin gia hạn thêm
+                                            </button>
+                                        )
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
                 </div>
             </div>
         </div>
+      )}
+
+      {/* EXTENSION MODAL */}
+      {isExtensionModalOpen && (
+          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+              <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm animate-fade-in">
+                  <h3 className="font-bold text-lg mb-4 text-slate-800">Xin gia hạn Deadline</h3>
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-sm font-medium mb-1">Gia hạn đến ngày</label>
+                          <input type="date" className="w-full border rounded-lg p-2" onChange={e => setExtensionDate(e.target.value)} />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-medium mb-1">Lý do</label>
+                          <textarea className="w-full border rounded-lg p-2 h-20" placeholder="Lý do chậm tiến độ..." onChange={e => setExtensionReason(e.target.value)}></textarea>
+                      </div>
+                      <div className="flex justify-end gap-2 pt-2">
+                          <button onClick={() => setIsExtensionModalOpen(false)} className="px-3 py-2 text-sm text-slate-600">Hủy</button>
+                          <button onClick={handleRequestExtension} className="px-3 py-2 bg-orange-600 text-white rounded-lg text-sm font-bold">Gửi yêu cầu</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );
