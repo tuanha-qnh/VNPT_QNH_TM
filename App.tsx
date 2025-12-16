@@ -79,7 +79,7 @@ const App: React.FC = () => {
       case 'dashboard':
         return <Dashboard tasks={tasks} />;
       case 'admin':
-        return currentUser?.title.includes('Admin') ? (
+        return currentUser?.title.includes('Admin') || currentUser?.canManageUsers ? (
             <Admin units={units} users={users} currentUser={currentUser} setUnits={setUnits} setUsers={setUsers} />
         ) : <div className="p-8 text-center text-red-500">Bạn không có quyền truy cập module này.</div>;
       case 'tasks':
@@ -109,11 +109,7 @@ const App: React.FC = () => {
                       <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition">Đăng nhập</button>
                       
                       <div className="text-center text-xs text-slate-400 mt-4 border-t pt-4">
-                          <p className="mb-2 font-semibold">Tài khoản mặc định:</p>
-                          <p>Admin: admin / 123</p>
-                          <p>User: anv / 123456</p>
-                          
-                          <button type="button" onClick={handleResetData} className="mt-4 text-red-500 hover:text-red-700 underline flex items-center justify-center gap-1 w-full font-medium">
+                          <button type="button" onClick={handleResetData} className="text-red-500 hover:text-red-700 underline flex items-center justify-center gap-1 w-full font-medium">
                             <RotateCcw size={14} /> Reset Dữ liệu Demo
                           </button>
                       </div>
@@ -150,22 +146,29 @@ const App: React.FC = () => {
            </div>
            
            <div className="flex items-center space-x-4">
-             <div className="flex items-center gap-3 pl-4 border-l cursor-pointer group relative">
-               <div className="text-right hidden md:block">
+             {/* User Info */}
+             <div className="flex items-center gap-3 text-right">
+               <div className="hidden md:block">
                  <div className="text-sm font-bold text-slate-800">{currentUser.fullName}</div>
                  <div className="text-xs text-slate-500">{currentUser.title}</div>
                </div>
                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 border border-blue-200 overflow-hidden">
                  {currentUser.avatar ? <img src={currentUser.avatar} alt="" /> : <UserIcon size={20} />}
                </div>
-               
-               {/* Logout Dropdown */}
-               <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-100 hidden group-hover:block p-2">
-                   <button onClick={() => setCurrentUser(null)} className="w-full flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded text-sm font-medium">
-                       <LogOut size={16} /> Đăng xuất
-                   </button>
-               </div>
              </div>
+             
+             {/* Separator */}
+             <div className="h-8 w-px bg-slate-200 mx-1"></div>
+
+             {/* Logout Button */}
+             <button 
+                onClick={() => setCurrentUser(null)} 
+                className="flex items-center gap-2 text-slate-500 hover:text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors text-sm font-medium"
+                title="Đăng xuất"
+             >
+                 <LogOut size={18} />
+                 <span className="hidden md:inline">Đăng xuất</span>
+             </button>
            </div>
         </header>
 

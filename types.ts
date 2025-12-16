@@ -1,6 +1,4 @@
 export enum Role {
-  ADMIN = 'Quản trị viên (Admin)',
-  SUB_ADMIN = 'Quản trị đơn vị (Sub-Admin)',
   DIRECTOR = 'Giám đốc',
   VICE_DIRECTOR = 'Phó Giám đốc',
   MANAGER = 'Trưởng phòng',
@@ -10,6 +8,7 @@ export enum Role {
 
 export interface Unit {
   id: string;
+  code: string; // Mã đơn vị (QNHxxx)
   parentId: string | null; // For tree structure
   name: string;
   managerIds: string[]; 
@@ -28,7 +27,7 @@ export interface User {
   password?: string; 
   isFirstLogin: boolean; // Force password change
   avatar?: string;
-  canManageUsers?: boolean; // Sub-admin permission
+  canManageUsers?: boolean; // Sub-admin permission (Quyền quản trị đơn vị)
 }
 
 export enum TaskStatus {
