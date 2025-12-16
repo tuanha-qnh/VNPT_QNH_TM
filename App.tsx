@@ -107,7 +107,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     try {
         // 1. Kiểm tra bảng tồn tại
-        let { data: existingUnits, error: uCheckErr } = await supabase.from('units').select('id').limit(1);
+        let { error: uCheckErr } = await supabase.from('units').select('id').limit(1);
         
         if (uCheckErr && isTableMissingError(uCheckErr.message)) {
             setShowSetupModal(true);
@@ -115,10 +115,13 @@ const App: React.FC = () => {
             return;
         }
 
-        // 2. Kiểm tra hoặc tạo Đơn vị gốc
-        let unitId = existingUnits?.[0]?.id;
+        // 2. Tìm hoặc Tạo Đơn vị gốc (QUAN TRỌNG: Phải tìm đúng mã VNPT_QN)
+        // Logic cũ lấy bừa 1 unit gây lỗi Foreign Key nếu unit đó bị xóa
+        let { data: rootUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN').limit(1);
+        let unitId = rootUnits?.[0]?.id;
 
         if (!unitId) {
+            console.log("Không tìm thấy unit gốc, đang tạo mới...");
             const { data: newUnit, error: uErr } = await supabase.from('units').insert([{
                 code: 'VNPT_QN',
                 name: 'VNPT Quảng Ninh (Gốc)',
@@ -129,7 +132,7 @@ const App: React.FC = () => {
             if (newUnit && newUnit[0]) unitId = newUnit[0].id;
         }
 
-        if (!unitId) throw new Error("Không thể xác định đơn vị gốc.");
+        if (!unitId) throw new Error("Không lấy được ID Đơn vị gốc. Vui lòng thử lại.");
 
         // 3. Kiểm tra hoặc tạo Admin User
         const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').single();
@@ -141,7 +144,7 @@ const App: React.FC = () => {
             username: 'admin',
             password: '123', // Mật khẩu mặc định
             title: 'Giám đốc',
-            unit_id: unitId,
+            unit_id: unitId, // Sử dụng ID chắc chắn đã tồn tại
             is_first_login: false,
             can_manage: true
         };
