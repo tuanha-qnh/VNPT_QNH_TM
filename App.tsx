@@ -8,7 +8,7 @@ import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import { supabase } from './utils/supabaseClient'; 
 import { Task, Unit, User, Role } from './types';
-import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; // Import Script
+import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; 
 import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check, Server } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -106,35 +106,47 @@ const App: React.FC = () => {
   const handleInitializeSystem = async () => {
     setIsLoading(true);
     try {
-        // 1. Kiểm tra bảng tồn tại
+        // 1. Kiểm tra kết nối bảng Units
         let { error: uCheckErr } = await supabase.from('units').select('id').limit(1);
-        
         if (uCheckErr && isTableMissingError(uCheckErr.message)) {
             setShowSetupModal(true);
             setIsLoading(false);
             return;
         }
 
-        // 2. Tìm hoặc Tạo Đơn vị gốc (QUAN TRỌNG: Phải tìm đúng mã VNPT_QN)
-        // Logic cũ lấy bừa 1 unit gây lỗi Foreign Key nếu unit đó bị xóa
-        let { data: rootUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN').limit(1);
-        let unitId = rootUnits?.[0]?.id;
+        // 2. TÌM KIẾM ĐƠN VỊ GỐC (Logic sửa lỗi Foreign Key)
+        let unitId = null;
 
+        // a) Thử tìm đích danh 'VNPT_QN'
+        const { data: rootUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN');
+        if (rootUnits && rootUnits.length > 0) {
+            unitId = rootUnits[0].id;
+            console.log("Đã tìm thấy Unit gốc VNPT_QN:", unitId);
+        }
+
+        // b) Nếu không thấy, thử tìm bất kỳ unit nào có level=0 (hoặc bất kỳ unit nào)
         if (!unitId) {
-            console.log("Không tìm thấy unit gốc, đang tạo mới...");
+             console.log("Không thấy VNPT_QN, tìm unit bất kỳ...");
+             const { data: anyUnit } = await supabase.from('units').select('id').limit(1);
+             if (anyUnit && anyUnit.length > 0) unitId = anyUnit[0].id;
+        }
+
+        // c) Nếu bảng Units hoàn toàn rỗng, tạo mới
+        if (!unitId) {
+            console.log("Bảng Units rỗng, tạo mới...");
             const { data: newUnit, error: uErr } = await supabase.from('units').insert([{
                 code: 'VNPT_QN',
                 name: 'VNPT Quảng Ninh (Gốc)',
                 level: 0
             }]).select();
             
-            if (uErr) throw new Error("Lỗi tạo đơn vị: " + uErr.message);
+            if (uErr) throw new Error("Lỗi tạo đơn vị gốc: " + uErr.message);
             if (newUnit && newUnit[0]) unitId = newUnit[0].id;
         }
 
-        if (!unitId) throw new Error("Không lấy được ID Đơn vị gốc. Vui lòng thử lại.");
+        if (!unitId) throw new Error("Không thể xác định Unit ID hợp lệ. Vui lòng kiểm tra bảng 'units'.");
 
-        // 3. Kiểm tra hoặc tạo Admin User
+        // 3. TẠO HOẶC CẬP NHẬT USER ADMIN
         const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').single();
         
         const adminData = {
@@ -142,9 +154,9 @@ const App: React.FC = () => {
             full_name: 'Quản Trị Viên (System)',
             email: 'admin@vnpt.vn',
             username: 'admin',
-            password: '123', // Mật khẩu mặc định
+            password: '123',
             title: 'Giám đốc',
-            unit_id: unitId, // Sử dụng ID chắc chắn đã tồn tại
+            unit_id: unitId, // Sử dụng ID đã tìm được ở bước 2
             is_first_login: false,
             can_manage: true
         };
@@ -161,7 +173,7 @@ const App: React.FC = () => {
         await fetchInitialData();
 
     } catch (err: any) {
-        console.error(err);
+        console.error("Setup Error:", err);
         if (isTableMissingError(err.message)) {
              setShowSetupModal(true);
         } else {

@@ -1,6 +1,6 @@
 
 export const SQL_SETUP_SCRIPT = `
--- 1. Bật Extension UUID để tự sinh ID
+-- 1. Bật Extension UUID
 create extension if not exists "uuid-ossp";
 
 -- 2. Tạo bảng Đơn vị (units)
@@ -60,22 +60,24 @@ create policy "Allow All Users" on users for all using (true) with check (true);
 alter table tasks enable row level security;
 create policy "Allow All Tasks" on tasks for all using (true) with check (true);
 
--- 6. KHỞI TẠO DỮ LIỆU MẶC ĐỊNH (SEEDING)
+-- 6. KHỞI TẠO DỮ LIỆU (SEEDING) - Chạy an toàn
 DO $$
 DECLARE
-  rootId uuid;
+  target_unit_id uuid;
 BEGIN
-  -- Tạo Unit gốc nếu chưa có
-  IF NOT EXISTS (SELECT 1 FROM units WHERE code = 'VNPT_QN') THEN
-    INSERT INTO units (code, name, level) VALUES ('VNPT_QN', 'VNPT Quảng Ninh (Gốc)', 0) RETURNING id INTO rootId;
-  ELSE
-    SELECT id INTO rootId FROM units WHERE code = 'VNPT_QN';
+  -- Bước 1: Tìm hoặc Tạo Unit Gốc (VNPT_QN)
+  SELECT id INTO target_unit_id FROM units WHERE code = 'VNPT_QN' LIMIT 1;
+  
+  IF target_unit_id IS NULL THEN
+    INSERT INTO units (code, name, level) 
+    VALUES ('VNPT_QN', 'VNPT Quảng Ninh (Gốc)', 0) 
+    RETURNING id INTO target_unit_id;
   END IF;
 
-  -- Tạo User Admin nếu chưa có
+  -- Bước 2: Tạo User Admin gắn với Unit ID vừa tìm được
   IF NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin') THEN
     INSERT INTO users (hrm_code, full_name, email, username, password, title, unit_id, can_manage, is_first_login)
-    VALUES ('ADMIN', 'Quản Trị Viên', 'admin@vnpt.vn', 'admin', '123', 'Giám đốc', rootId, true, false);
+    VALUES ('ADMIN', 'Quản Trị Viên', 'admin@vnpt.vn', 'admin', '123', 'Giám đốc', target_unit_id, true, false);
   END IF;
 END $$;
 `;
