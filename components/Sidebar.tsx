@@ -64,7 +64,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
         
         {isOpen && (
             <div className="px-4 text-[10px] text-gray-500 text-center pt-2">
-                Version 1.1.0 (Auto-Save)
+                Version 1.1.1 (Hotfix)
             </div>
         )}
       </div>

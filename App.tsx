@@ -236,15 +236,35 @@ const App: React.FC = () => {
       setTimeout(() => setCopySuccess(false), 2000);
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  // --- LOGIN LOGIC WITH MD5 MIGRATION ---
+  const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault();
-      // Mã hóa MD5 input password
+      
       const hashedInput = md5(loginPassword);
 
-      const user = users.find(u => u.username === loginUsername && u.password === hashedInput);
+      // 1. Thử tìm user có mật khẩu đã mã hóa (Chuẩn mới)
+      let user = users.find(u => u.username === loginUsername && u.password === hashedInput);
+
+      // 2. Nếu không tìm thấy, thử tìm user có mật khẩu văn bản thường (Legacy Migration)
+      // Trường hợp này xảy ra nếu data cũ chưa được hash
+      if (!user) {
+          user = users.find(u => u.username === loginUsername && u.password === loginPassword);
+          
+          if (user) {
+              console.log(`[Security] Migrating password to MD5 for user: ${user.username}`);
+              // Cập nhật ngay lập tức vào Database để lần sau dùng hash
+              const { error } = await supabase.from('users').update({ password: hashedInput }).eq('id', user.id);
+              
+              if (!error) {
+                  // Cập nhật state local
+                  user.password = hashedInput; 
+                  setUsers(prev => prev.map(u => u.id === user!.id ? { ...u, password: hashedInput } : u));
+              }
+          }
+      }
+
       if (user) {
           setCurrentUser(user);
-          // Lưu vào localStorage
           localStorage.setItem('vnpt_user_session', JSON.stringify(user));
 
           if (user.isFirstLogin) setShowChangePass(true);

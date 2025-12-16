@@ -1,6 +1,6 @@
 {
   "name": "VNPT Quảng Ninh Task Manager",
   "description": "Hệ thống quản trị công việc, nhân sự và chỉ số điều hành (KPI) theo phong cách Monday.com dành cho VNPT Quảng Ninh.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "requestFramePermissions": []
 }
