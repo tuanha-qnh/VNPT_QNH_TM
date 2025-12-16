@@ -53,7 +53,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
       </nav>
 
       <div className="p-4 border-t border-white/10">
-        <button className="flex items-center text-gray-400 hover:text-white transition-colors w-full">
+        <button 
+          onClick={() => setActiveModule('settings')}
+          className={`flex items-center text-gray-400 hover:text-white transition-colors w-full px-4 py-2 rounded ${activeModule === 'settings' ? 'bg-white/10 text-white' : ''}`}
+          title={!isOpen ? 'Cài đặt' : ''}
+        >
           <Settings size={20} />
           {isOpen && <span className="ml-3">Cài đặt</span>}
         </button>

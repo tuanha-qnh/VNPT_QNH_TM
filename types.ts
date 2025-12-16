@@ -22,6 +22,7 @@ export interface User {
   id: string;
   hrmCode: string;
   fullName: string;
+  email: string; // NEW: Email address
   title: Role | string;
   unitId: string;
   username: string;

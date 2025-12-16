@@ -11,16 +11,16 @@ const initialUnits: Unit[] = [
 
 const initialUsers: User[] = [
   // Admin hệ thống (Giám đốc + Quyền Admin)
-  { id: 'usr_admin', hrmCode: 'ADMIN', fullName: 'Quản Trị Viên', title: Role.DIRECTOR, unitId: 'u1', username: 'admin', password: '123', isFirstLogin: false, canManageUsers: true },
+  { id: 'usr_admin', hrmCode: 'ADMIN', fullName: 'Quản Trị Viên', email: 'admin@vnpt.vn', title: Role.DIRECTOR, unitId: 'u1', username: 'admin', password: '123', isFirstLogin: false, canManageUsers: true },
   
   // Các user khác
-  { id: 'usr1', hrmCode: 'VNPT001', fullName: 'Nguyễn Văn A', title: Role.MANAGER, unitId: 'u2', username: 'anv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=1' },
-  { id: 'usr2', hrmCode: 'VNPT002', fullName: 'Trần Thị B', title: Role.STAFF, unitId: 'u2', username: 'btt', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=2' },
-  { id: 'usr3', hrmCode: 'VNPT003', fullName: 'Lê Văn C', title: Role.DIRECTOR, unitId: 'u3', username: 'clv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=3' },
-  { id: 'usr4', hrmCode: 'VNPT004', fullName: 'Phạm Thị D', title: Role.STAFF, unitId: 'u3', username: 'dpt', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=4' },
+  { id: 'usr1', hrmCode: 'VNPT001', fullName: 'Nguyễn Văn A', email: 'vana@vnpt.vn', title: Role.MANAGER, unitId: 'u2', username: 'anv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=1' },
+  { id: 'usr2', hrmCode: 'VNPT002', fullName: 'Trần Thị B', email: 'thib@vnpt.vn', title: Role.STAFF, unitId: 'u2', username: 'btt', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=2' },
+  { id: 'usr3', hrmCode: 'VNPT003', fullName: 'Lê Văn C', email: 'vanc@vnpt.vn', title: Role.DIRECTOR, unitId: 'u3', username: 'clv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=3' },
+  { id: 'usr4', hrmCode: 'VNPT004', fullName: 'Phạm Thị D', email: 'thid@vnpt.vn', title: Role.STAFF, unitId: 'u3', username: 'dpt', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=4' },
   
   // Sub-admin (Ví dụ Giám đốc TTVT1 được quyền quản trị TTVT1)
-  { id: 'usr5', hrmCode: 'VNPT005', fullName: 'Hoàng Văn E', title: Role.DIRECTOR, unitId: 'u4', username: 'ehv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=5', canManageUsers: true }, 
+  { id: 'usr5', hrmCode: 'VNPT005', fullName: 'Hoàng Văn E', email: 'vane@vnpt.vn', title: Role.DIRECTOR, unitId: 'u4', username: 'ehv', password: '123456', isFirstLogin: true, avatar: 'https://picsum.photos/40/40?random=5', canManageUsers: true }, 
 ];
 
 const initialTasks: Task[] = [

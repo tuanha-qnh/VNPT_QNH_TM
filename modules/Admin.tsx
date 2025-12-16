@@ -125,10 +125,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             const dbUser = {
                 hrm_code: formData.hrmCode,
                 full_name: formData.fullName,
+                email: formData.email, // NEW: Thêm email vào DB
                 title: formData.title || Role.STAFF,
                 unit_id: formData.unitId || visibleUnits[0]?.id,
                 username: formData.username,
-                password: formData.password, // Lưu ý: Nên hash password ở backend thật
+                password: formData.password, 
                 can_manage: formData.canManageUsers || false
             };
 
@@ -151,7 +152,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 if (data && data[0]) {
                     const u = data[0];
                     const newUser: User = {
-                        id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, username: u.username,
+                        id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email, username: u.username,
                         password: u.password, title: u.title, unitId: u.unit_id,
                         isFirstLogin: u.is_first_login, canManageUsers: u.can_manage
                     };
@@ -208,9 +209,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
     }
   };
 
-  // ... (Phần Import Excel và Render Tree giữ nguyên như logic cũ, chỉ thay đổi data flow)
-  // Để code gọn, tôi giữ nguyên phần render UI, vì nó chỉ phụ thuộc vào props units/users đã được update.
-
   const openModal = (item?: any, parentId?: string) => {
     setEditingItem(item);
     const defaultUnitId = isSubAdmin ? currentUser.unitId : (parentId || visibleUnits[0]?.id);
@@ -223,7 +221,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
     setIsModalOpen(true);
   };
   
-  // -- GIỮ NGUYÊN PHẦN RENDER UI --
   const renderTreeRecursively = (unit: Unit) => {
       const children = visibleUnits.filter(u => u.parentId === unit.id);
       return (
@@ -302,6 +299,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       <tr>
                         <th className="px-4 py-3">Mã HRM</th>
                         <th className="px-4 py-3">Họ và tên</th>
+                        <th className="px-4 py-3">Email</th>
                         <th className="px-4 py-3">Username</th>
                         <th className="px-4 py-3">Chức danh</th>
                         <th className="px-4 py-3">Đơn vị</th>
@@ -313,6 +311,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                         <tr key={user.id} className="hover:bg-slate-50/80">
                           <td className="px-4 py-3">{user.hrmCode}</td>
                           <td className="px-4 py-3"><div className="font-medium text-slate-900">{user.fullName}</div></td>
+                          <td className="px-4 py-3 text-blue-600 truncate max-w-[150px]">{user.email}</td>
                           <td className="px-4 py-3 font-mono text-xs bg-slate-100 px-1 rounded inline-block mt-1">{user.username}</td>
                           <td className="px-4 py-3"><span className="px-2 py-1 rounded bg-blue-50 text-blue-700 text-xs border border-blue-100">{user.title}</span></td>
                           <td className="px-4 py-3">{units.find(u => u.id === user.unitId)?.name}</td>
@@ -374,6 +373,10 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                         <label className="block text-sm font-medium text-slate-700 mb-1">Họ tên</label>
                         <input type="text" className="w-full border rounded-lg p-2.5" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
                     </div>
+                  </div>
+                  <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Email (Dùng để khôi phục mật khẩu)</label>
+                      <input type="email" className="w-full border rounded-lg p-2.5" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="example@vnpt.vn" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
