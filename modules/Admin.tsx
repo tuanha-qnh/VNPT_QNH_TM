@@ -3,7 +3,8 @@ import React, { useState, useRef, useMemo } from 'react';
 import { Unit, User, Role } from '../types';
 import { Plus, Edit2, Trash2, Building, User as UserIcon, Save, X, ChevronRight, ChevronDown, RefreshCcw, FileUp, Download, FileSpreadsheet, ShieldCheck, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { supabase } from '../utils/supabaseClient'; // Import Client
+import { supabase } from '../utils/supabaseClient'; 
+import md5 from 'md5'; // Import MD5
 
 interface AdminProps {
   units: Unit[];
@@ -16,7 +17,7 @@ interface AdminProps {
 const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setUsers }) => {
   const [activeTab, setActiveTab] = useState<'units' | 'users'>('units');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false); // State cho Import Modal
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
@@ -68,9 +69,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return code;
   };
 
-  // --- LOGIC IMPORT EXCEL ---
+  // --- LOGIC IMPORT EXCEL (WITH MD5) ---
   
-  // 1. Tải file mẫu
   const handleDownloadTemplate = () => {
       const headers = ['HRM_CODE', 'FULL_NAME', 'EMAIL', 'USERNAME', 'PASSWORD', 'TITLE', 'UNIT_CODE'];
       const sampleData = [
@@ -84,7 +84,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       XLSX.writeFile(wb, "Mau_Nhap_Nhan_Su.xlsx");
   };
 
-  // 2. Xử lý file Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -114,19 +113,21 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       return;
                   }
 
-                  // Tìm Unit ID từ Unit Code
                   const targetUnit = units.find(u => u.code === unitCode);
                   if (!targetUnit) {
                       errors.push(`Dòng ${index + 2}: Mã đơn vị '${unitCode}' không tồn tại trong hệ thống.`);
                       return;
                   }
 
+                  const rawPassword = String(row['PASSWORD'] || '123456');
+                  const hashedPassword = md5(rawPassword); // HASH MD5
+
                   newUsersPayload.push({
                       hrm_code: String(hrmCode),
                       full_name: row['FULL_NAME'] || 'Chưa đặt tên',
                       email: row['EMAIL'] || '',
                       username: String(username),
-                      password: String(row['PASSWORD'] || '123456'),
+                      password: hashedPassword, // Store Hash
                       title: row['TITLE'] || 'Nhân viên',
                       unit_id: targetUnit.id,
                       can_manage: false,
@@ -139,13 +140,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               }
 
               if (newUsersPayload.length > 0) {
-                  // Insert vào Supabase
                   const { data: insertedData, error } = await supabase.from('users').insert(newUsersPayload).select();
                   
                   if (error) throw error;
 
                   if (insertedData) {
-                      // Map lại dữ liệu để cập nhật State
                       const mappedUsers: User[] = insertedData.map((u: any) => ({
                           id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email,
                           username: u.username, password: u.password, title: u.title, unitId: u.unit_id,
@@ -167,7 +166,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       reader.readAsBinaryString(file);
   };
 
-  // --- LOGIC LƯU VÀO DB (GIỮ NGUYÊN) ---
+  // --- LOGIC LƯU VÀO DB (WITH MD5) ---
   const handleSave = async () => {
     if (activeTab === 'users' && !editingItem) {
         if (!formData.username || !formData.password) {
@@ -213,22 +212,28 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             }
 
         } else {
-            const dbUser = {
+            // USER LOGIC
+            const dbUser: any = {
                 hrm_code: formData.hrmCode,
                 full_name: formData.fullName,
                 email: formData.email, 
                 title: formData.title || Role.STAFF,
                 unit_id: formData.unitId || visibleUnits[0]?.id,
                 username: formData.username,
-                password: formData.password, 
                 can_manage: formData.canManageUsers || false
             };
+            
+            // Only update password if create new
+            if (!editingItem) {
+                 dbUser.password = md5(formData.password); // Hash password when creating
+                 dbUser.is_first_login = true;
+            }
 
             if (editingItem) {
-                const { username, ...updatePayload } = dbUser; 
+                const { username, password, ...updatePayload } = dbUser; // Don't update password/username here
                 const { error } = await supabase.from('users').update(updatePayload).eq('id', editingItem.id);
                 if (error) throw error;
-                const updatedUser = { ...editingItem, ...formData };
+                const updatedUser = { ...editingItem, ...formData }; // Optimistic update
                 setUsers(users.map(u => u.id === editingItem.id ? updatedUser : u));
             } else {
                 const { data, error } = await supabase.from('users').insert([dbUser]).select();
@@ -257,9 +262,10 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
   const handleResetPassword = async (userId: string) => {
     if (!confirm("Bạn có chắc chắn muốn reset mật khẩu về '123456'?")) return;
     try {
-        const { error } = await supabase.from('users').update({ password: '123456', is_first_login: true }).eq('id', userId);
+        const defaultHash = md5('123456');
+        const { error } = await supabase.from('users').update({ password: defaultHash, is_first_login: true }).eq('id', userId);
         if (error) throw error;
-        setUsers(users.map(u => u.id === userId ? { ...u, password: '123456', isFirstLogin: true } : u));
+        setUsers(users.map(u => u.id === userId ? { ...u, password: defaultHash, isFirstLogin: true } : u));
         alert("Đã reset mật khẩu thành công!");
     } catch(err: any) {
         alert("Lỗi: " + err.message);
@@ -440,7 +446,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                           <ul className="list-disc pl-5 space-y-1">
                               <li>Sử dụng đúng <strong>File mẫu chuẩn</strong> để tránh lỗi.</li>
                               <li>Cột <strong>UNIT_CODE</strong> phải khớp với Mã đơn vị đã khai báo.</li>
-                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong>.</li>
+                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong> (Sẽ được mã hóa MD5).</li>
                           </ul>
                       </div>
                   </div>

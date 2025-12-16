@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './modules/Dashboard';
 import Admin from './modules/Admin';
@@ -10,6 +10,7 @@ import { supabase } from './utils/supabaseClient';
 import { Task, Unit, User, Role } from './types';
 import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; 
 import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check, Server } from 'lucide-react';
+import md5 from 'md5'; // Import MD5
 
 const App: React.FC = () => {
   // Authentication State
@@ -21,6 +22,10 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true); 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
+
+  // Auto Logout State
+  const logoutTimerRef = useRef<any>(null);
+  const AUTO_LOGOUT_TIME = 5 * 60 * 1000; // 5 phút
 
   // Setup State
   const [showSetupModal, setShowSetupModal] = useState(false);
@@ -34,6 +39,63 @@ const App: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+
+  // --- SESSION PERSISTENCE ---
+  useEffect(() => {
+    // Kiểm tra session trong localStorage khi tải trang
+    const storedUser = localStorage.getItem('vnpt_user_session');
+    if (storedUser) {
+        try {
+            const user = JSON.parse(storedUser);
+            setCurrentUser(user);
+        } catch (e) {
+            console.error("Lỗi khôi phục phiên:", e);
+            localStorage.removeItem('vnpt_user_session');
+        }
+    }
+    // Sau khi check session mới fetch data
+    fetchInitialData();
+  }, []);
+
+  // --- AUTO LOGOUT LOGIC ---
+  const handleLogout = () => {
+      setCurrentUser(null);
+      localStorage.removeItem('vnpt_user_session');
+      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+  };
+
+  const resetLogoutTimer = () => {
+      if (!currentUser) return;
+      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+      logoutTimerRef.current = setTimeout(() => {
+          alert("Hết phiên làm việc (5 phút không tương tác). Vui lòng đăng nhập lại.");
+          handleLogout();
+      }, AUTO_LOGOUT_TIME);
+  };
+
+  useEffect(() => {
+      if (currentUser) {
+          // Gán sự kiện để reset timer
+          window.addEventListener('mousemove', resetLogoutTimer);
+          window.addEventListener('keypress', resetLogoutTimer);
+          window.addEventListener('click', resetLogoutTimer);
+          
+          // Khởi động timer lần đầu
+          resetLogoutTimer();
+      } else {
+          // Clear sự kiện khi logout
+          window.removeEventListener('mousemove', resetLogoutTimer);
+          window.removeEventListener('keypress', resetLogoutTimer);
+          window.removeEventListener('click', resetLogoutTimer);
+          if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+      }
+      return () => {
+          window.removeEventListener('mousemove', resetLogoutTimer);
+          window.removeEventListener('keypress', resetLogoutTimer);
+          window.removeEventListener('click', resetLogoutTimer);
+          if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+      };
+  }, [currentUser]);
 
   // Helper function to check if error relates to missing tables
   const isTableMissingError = (errMsg: string) => {
@@ -98,10 +160,6 @@ const App: React.FC = () => {
       }
   };
 
-  useEffect(() => {
-      fetchInitialData();
-  }, []);
-
   // --- ADMIN RESET / INIT LOGIC ---
   const handleInitializeSystem = async () => {
     setIsLoading(true);
@@ -114,48 +172,39 @@ const App: React.FC = () => {
             return;
         }
 
-        // 2. TÌM HOẶC TẠO UNIT 'VNPT_QN' (Step-by-step để tránh lỗi FK)
+        // 2. TÌM HOẶC TẠO UNIT 'VNPT_QN'
         let unitId = null;
-        
-        // Bước 2a: Tìm kiếm
         const { data: existingUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN').limit(1);
         
         if (existingUnits && existingUnits.length > 0) {
             unitId = existingUnits[0].id;
         } else {
-            // Bước 2b: Nếu không có, Tạo mới
             console.log("Creating root unit...");
             const { data: newUnit, error: createUnitErr } = await supabase
                 .from('units')
-                .insert([{
-                    code: 'VNPT_QN',
-                    name: 'VNPT Quảng Ninh (Gốc)',
-                    level: 0
-                }])
-                .select(); // Quan trọng: Phải có .select() để trả về ID
-
+                .insert([{ code: 'VNPT_QN', name: 'VNPT Quảng Ninh (Gốc)', level: 0 }])
+                .select();
             if (createUnitErr) throw new Error("Lỗi tạo Unit: " + createUnitErr.message);
             if (!newUnit || newUnit.length === 0) throw new Error("Không lấy được ID Unit sau khi tạo.");
-            
             unitId = newUnit[0].id;
         }
 
         if (!unitId) throw new Error("Lỗi nghiêm trọng: Không xác định được Unit ID.");
 
-        // 3. TẠO USER ADMIN (Khi đã chắc chắn có unitId)
+        // 3. TẠO USER ADMIN (Dùng MD5)
+        const hashedPassword = md5('123'); // Mặc định 123
         const adminData = {
             hrm_code: 'ADMIN',
             full_name: 'Quản Trị Viên (System)',
             email: 'admin@vnpt.vn',
             username: 'admin',
-            password: '123',
+            password: hashedPassword, 
             title: 'Giám đốc',
-            unit_id: unitId, // ID NÀY ĐÃ CHẮC CHẮN TỒN TẠI
+            unit_id: unitId,
             is_first_login: false,
             can_manage: true
         };
 
-        // Kiểm tra admin cũ có tồn tại không để Update hoặc Insert
         const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').maybeSingle();
 
         if (existingUser) {
@@ -189,9 +238,15 @@ const App: React.FC = () => {
 
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
-      const user = users.find(u => u.username === loginUsername && u.password === loginPassword);
+      // Mã hóa MD5 input password
+      const hashedInput = md5(loginPassword);
+
+      const user = users.find(u => u.username === loginUsername && u.password === hashedInput);
       if (user) {
           setCurrentUser(user);
+          // Lưu vào localStorage
+          localStorage.setItem('vnpt_user_session', JSON.stringify(user));
+
           if (user.isFirstLogin) setShowChangePass(true);
       } else {
           alert("Sai tên đăng nhập hoặc mật khẩu.");
@@ -205,12 +260,15 @@ const App: React.FC = () => {
           return;
       }
       
-      const { error } = await supabase.from('users').update({ password: newPassword, is_first_login: false }).eq('id', currentUser!.id);
+      const hashedPassword = md5(newPassword); // Hash new pass
+
+      const { error } = await supabase.from('users').update({ password: hashedPassword, is_first_login: false }).eq('id', currentUser!.id);
 
       if (!error) {
-          const updatedUser = { ...currentUser!, password: newPassword, isFirstLogin: false };
+          const updatedUser = { ...currentUser!, password: hashedPassword, isFirstLogin: false };
           setUsers(users.map(u => u.id === currentUser!.id ? updatedUser : u));
           setCurrentUser(updatedUser);
+          localStorage.setItem('vnpt_user_session', JSON.stringify(updatedUser)); // Cập nhật session
           setShowChangePass(false);
           alert("Đổi mật khẩu thành công!");
       } else {
@@ -230,10 +288,14 @@ const App: React.FC = () => {
           }
           const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%";
           const randomPass = Array(10).fill(null).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
-          const { error } = await supabase.from('users').update({ password: randomPass, is_first_login: true }).eq('id', targetUser.id);
+          
+          const hashedRandomPass = md5(randomPass); // Hash
+
+          const { error } = await supabase.from('users').update({ password: hashedRandomPass, is_first_login: true }).eq('id', targetUser.id);
           if (error) throw error;
+          
           console.log(`[MOCK EMAIL SERVICE] Sending to ${forgotEmail}: New Password is ${randomPass}`);
-          setUsers(users.map(u => u.id === targetUser.id ? { ...u, password: randomPass, isFirstLogin: true } : u));
+          setUsers(users.map(u => u.id === targetUser.id ? { ...u, password: hashedRandomPass, isFirstLogin: true } : u));
           alert(`Mật khẩu mới đã được gửi đến email: ${forgotEmail}\n(Mô phỏng: Mật khẩu là ${randomPass})`);
           setIsForgotPassword(false);
           setForgotEmail('');
@@ -425,7 +487,7 @@ const App: React.FC = () => {
              <div className="h-8 w-px bg-slate-200 mx-1"></div>
 
              <button 
-                onClick={() => setCurrentUser(null)} 
+                onClick={handleLogout} 
                 className="flex items-center gap-2 text-slate-500 hover:text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors text-sm font-medium"
                 title="Đăng xuất"
              >

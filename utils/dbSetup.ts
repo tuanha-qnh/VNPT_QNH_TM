@@ -75,7 +75,8 @@ BEGIN
   RETURNING id INTO rootId;
 
   -- Tạo User Admin ngay lập tức với ID vừa tạo
+  -- PASSWORD LÀ MD5 CỦA '123' -> 202cb962ac59075b964b07152d234b70
   INSERT INTO users (hrm_code, full_name, email, username, password, title, unit_id, can_manage, is_first_login)
-  VALUES ('ADMIN', 'Quản Trị Viên (System)', 'admin@vnpt.vn', 'admin', '123', 'Giám đốc', rootId, true, false);
+  VALUES ('ADMIN', 'Quản Trị Viên (System)', 'admin@vnpt.vn', 'admin', '202cb962ac59075b964b07152d234b70', 'Giám đốc', rootId, true, false);
 END $$;
 `;
