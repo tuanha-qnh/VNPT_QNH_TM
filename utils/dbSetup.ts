@@ -50,8 +50,7 @@ create table if not exists tasks (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 5. Cấp quyền truy cập (Quan trọng: Cho phép App đọc/ghi dữ liệu)
--- Lưu ý: Đây là cấu hình cho MVP/Demo. Môi trường Production cần RLS chặt chẽ hơn.
+-- 5. Cấp quyền truy cập (RLS)
 alter table units enable row level security;
 create policy "Allow All Units" on units for all using (true) with check (true);
 
@@ -60,4 +59,23 @@ create policy "Allow All Users" on users for all using (true) with check (true);
 
 alter table tasks enable row level security;
 create policy "Allow All Tasks" on tasks for all using (true) with check (true);
+
+-- 6. KHỞI TẠO DỮ LIỆU MẶC ĐỊNH (SEEDING)
+DO $$
+DECLARE
+  rootId uuid;
+BEGIN
+  -- Tạo Unit gốc nếu chưa có
+  IF NOT EXISTS (SELECT 1 FROM units WHERE code = 'VNPT_QN') THEN
+    INSERT INTO units (code, name, level) VALUES ('VNPT_QN', 'VNPT Quảng Ninh (Gốc)', 0) RETURNING id INTO rootId;
+  ELSE
+    SELECT id INTO rootId FROM units WHERE code = 'VNPT_QN';
+  END IF;
+
+  -- Tạo User Admin nếu chưa có
+  IF NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin') THEN
+    INSERT INTO users (hrm_code, full_name, email, username, password, title, unit_id, can_manage, is_first_login)
+    VALUES ('ADMIN', 'Quản Trị Viên', 'admin@vnpt.vn', 'admin', '123', 'Giám đốc', rootId, true, false);
+  END IF;
+END $$;
 `;

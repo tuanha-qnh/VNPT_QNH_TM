@@ -9,7 +9,7 @@ import Settings from './modules/Settings';
 import { supabase } from './utils/supabaseClient'; 
 import { Task, Unit, User, Role } from './types';
 import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; // Import Script
-import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check } from 'lucide-react';
+import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check, Server } from 'lucide-react';
 
 const App: React.FC = () => {
   // Authentication State
@@ -50,10 +50,7 @@ const App: React.FC = () => {
           // 1. Lấy Units
           const { data: unitsData, error: uErr } = await supabase.from('units').select('*').order('level', { ascending: true });
           if (uErr) {
-              // Nếu lỗi là do chưa có bảng, hiển thị modal hướng dẫn
-              if (isTableMissingError(uErr.message)) {
-                  setShowSetupModal(true);
-              }
+              if (isTableMissingError(uErr.message)) setShowSetupModal(true);
               console.error("Lỗi tải Units:", uErr);
           }
 
@@ -112,7 +109,6 @@ const App: React.FC = () => {
         // 1. Kiểm tra bảng tồn tại
         let { data: existingUnits, error: uCheckErr } = await supabase.from('units').select('id').limit(1);
         
-        // Bắt lỗi tại đây nếu bảng chưa tồn tại
         if (uCheckErr && isTableMissingError(uCheckErr.message)) {
             setShowSetupModal(true);
             setIsLoading(false);
@@ -158,7 +154,7 @@ const App: React.FC = () => {
             if (err) throw err;
         }
 
-        alert("Khởi tạo thành công! \nTài khoản: admin \nMật khẩu: 123");
+        alert("Khởi tạo thành công! \n\nBạn có thể đăng nhập ngay với:\nTài khoản: admin \nMật khẩu: 123");
         await fetchInitialData();
 
     } catch (err: any) {
@@ -249,6 +245,7 @@ const App: React.FC = () => {
     }
   };
 
+  // --- SETUP MODAL IF TABLES MISSING ---
   if (showSetupModal) {
       return (
           <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -297,13 +294,39 @@ const App: React.FC = () => {
       )
   }
 
+  // --- LOGIN OR INIT SCREEN ---
   if (!currentUser) {
       return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md relative">
                   <h1 className="text-2xl font-bold text-blue-700 text-center mb-6 mt-4">VNPT Quảng Ninh Task Manager</h1>
                   
-                  {isForgotPassword ? (
+                  {isLoading ? (
+                        <div className="text-center py-8 text-slate-500 flex flex-col items-center">
+                            <Loader2 className="animate-spin mb-2" /> Đang kết nối máy chủ...
+                        </div>
+                  ) : users.length === 0 ? (
+                      // === SCREEN: INIT SYSTEM (DATABASE CONNECTED BUT EMPTY) ===
+                      <div className="animate-fade-in text-center space-y-6">
+                          <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
+                              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-white shadow-sm">
+                                  <Server size={32}/>
+                              </div>
+                              <h3 className="text-lg font-bold text-slate-800 mb-2">Xin chào!</h3>
+                              <p className="text-sm text-slate-600 mb-4">
+                                  Database đã được kết nối thành công nhưng chưa có dữ liệu.
+                              </p>
+                              <button 
+                                  onClick={handleInitializeSystem} 
+                                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform hover:scale-105"
+                              >
+                                  <PlayCircle size={20}/> Tạo tài khoản Admin ngay
+                              </button>
+                          </div>
+                          <p className="text-xs text-slate-400">Hệ thống sẽ tạo tài khoản mặc định: admin / 123</p>
+                      </div>
+                  ) : isForgotPassword ? (
+                      // === SCREEN: FORGOT PASSWORD ===
                       <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 animate-fade-in">
                           <div className="text-center mb-4">
                               <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2"><KeyRound size={24}/></div>
@@ -323,12 +346,8 @@ const App: React.FC = () => {
                           <button type="button" onClick={() => setIsForgotPassword(false)} className="w-full text-slate-500 text-sm hover:text-blue-600 py-2">Quay lại Đăng nhập</button>
                       </form>
                   ) : (
-                      isLoading ? (
-                        <div className="text-center py-8 text-slate-500 flex flex-col items-center">
-                            <Loader2 className="animate-spin mb-2" /> Đang kết nối máy chủ...
-                        </div>
-                      ) : (
-                        <div className="animate-fade-in">
+                      // === SCREEN: LOGIN FORM ===
+                      <div className="animate-fade-in">
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-1">Tên đăng nhập</label>
@@ -344,37 +363,7 @@ const App: React.FC = () => {
                                     <button type="button" onClick={() => setIsForgotPassword(true)} className="text-sm text-blue-600 hover:underline">Quên mật khẩu?</button>
                                 </div>
                             </form>
-                            
-                            {users.length === 0 && (
-                                <div className="mt-8 pt-6 border-t border-slate-100 text-center animate-pulse">
-                                    <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 mb-2">
-                                        <p className="text-xs text-orange-600 font-bold mb-1"><Database size={14} className="inline mr-1"/>Database chưa có dữ liệu</p>
-                                        <p className="text-xs text-slate-500">Hệ thống phát hiện chưa có user nào.</p>
-                                    </div>
-                                    <button 
-                                        type="button" 
-                                        onClick={handleInitializeSystem} 
-                                        className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors font-bold text-sm shadow-md"
-                                    >
-                                        <PlayCircle size={16}/> Khởi tạo Admin (admin / 123)
-                                    </button>
-                                </div>
-                            )}
-
-                            {users.length > 0 && (
-                                <div className="mt-8 text-center">
-                                    <button 
-                                        type="button" 
-                                        onClick={handleInitializeSystem} 
-                                        className="text-xs text-slate-300 hover:text-red-500 transition-colors"
-                                        title="Chỉ dùng khi cần reset lại user admin"
-                                    >
-                                        (Reset Admin Account)
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                      )
+                      </div>
                   )}
               </div>
           </div>
