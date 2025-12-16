@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Unit, KPIData, KPI_KEYS, KPIKey } from '../types';
+import { User, Unit, KPIData, GroupKPIData, KPI_KEYS, KPIKey, Role } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft } from 'lucide-react';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft, Users } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { loadData, saveData } from '../utils/mockData';
 
@@ -10,12 +10,13 @@ interface KPIProps {
   users: User[];
   units: Unit[];
   currentUser: User;
+  mode: 'personal' | 'group'; // NEW: Mode prop
 }
 
 interface DataSourceConfig {
     url: string;
     lastSync: string;
-    mapping: { [key: string]: string }; // System Field -> Sheet Header Name
+    mapping: { [key: string]: string }; 
 }
 
 // Generate random KPI data for demo fallback
@@ -36,15 +37,31 @@ const generateKPI = (users: User[]): KPIData[] => {
     });
 };
 
-const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
+const generateGroupKPI = (units: Unit[]): GroupKPIData[] => {
+    return units.map(u => {
+        const targets: any = {};
+        Object.keys(KPI_KEYS).forEach(key => {
+            const target = Math.floor(Math.random() * 500) + 200;
+            const actual = Math.floor(Math.random() * target * 1.1); 
+            targets[key] = { target, actual };
+        });
+        return {
+            unitCode: u.code,
+            unitName: u.name,
+            targets
+        };
+    });
+};
+
+const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config'>('eval'); 
   const [filterUnit, setFilterUnit] = useState<string>('all');
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
   const [pasteModalOpen, setPasteModalOpen] = useState(false);
   const [pasteContent, setPasteContent] = useState('');
   
-  // State for KPI Data
-  const [kpiData, setKpiData] = useState<KPIData[]>([]);
+  // State for KPI Data (Generic type based on mode)
+  const [kpiData, setKpiData] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // State for Google Sheet Config
@@ -53,39 +70,63 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
   const [isCheckingLink, setIsCheckingLink] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Permission Logic
+  const isAdmin = currentUser.hrmCode === 'ADMIN';
+  const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].some(r => currentUser.title.includes(r));
+  const canViewGroup = isAdmin || isLeader;
+
+  // Key Identifier based on mode
+  const ID_KEY = mode === 'personal' ? 'HRM_CODE' : 'UNIT_CODE';
+  const ID_LABEL = mode === 'personal' ? 'Mã nhân viên (HRM)' : 'Mã đơn vị';
+  const DATA_STORAGE_KEY = mode === 'personal' ? 'kpi_data' : 'kpi_group_data';
+  const CONFIG_STORAGE_KEY = mode === 'personal' ? 'kpi_config' : 'kpi_group_config';
+
   // Define System Fields needing mapping
   const systemFields = [
-      { key: 'HRM_CODE', label: 'Mã nhân viên (HRM)', required: true },
+      { key: ID_KEY, label: ID_LABEL, required: true },
       ...Object.keys(KPI_KEYS).map(k => ({ key: `${k.toUpperCase()}_TARGET`, label: `[${k.toUpperCase()}] Chỉ tiêu`, required: false })),
       ...Object.keys(KPI_KEYS).map(k => ({ key: `${k.toUpperCase()}_ACTUAL`, label: `[${k.toUpperCase()}] Thực hiện`, required: false })),
   ];
 
-  const isAdmin = currentUser.hrmCode === 'ADMIN';
-
   // Initialize data
   useEffect(() => {
-    const savedData = loadData<KPIData[]>('kpi_data', []);
+    // Check permission for group mode
+    if (mode === 'group' && !canViewGroup) {
+        return;
+    }
+
+    const savedData = loadData<any[]>(DATA_STORAGE_KEY, []);
     if (savedData.length > 0) {
         setKpiData(savedData);
     } else {
-        const initial = generateKPI(users);
+        const initial = mode === 'personal' ? generateKPI(users) : generateGroupKPI(units);
         setKpiData(initial);
-        saveData('kpi_data', initial);
+        saveData(DATA_STORAGE_KEY, initial);
     }
 
-    const savedConfig = loadData<DataSourceConfig>('kpi_config', { url: '', lastSync: '', mapping: {} });
+    const savedConfig = loadData<DataSourceConfig>(CONFIG_STORAGE_KEY, { url: '', lastSync: '', mapping: {} });
     setDsConfig(savedConfig);
-  }, [users]);
+  }, [users, units, mode]);
 
   // Save whenever data changes
   useEffect(() => {
-      if (kpiData.length > 0) saveData('kpi_data', kpiData);
+      if (kpiData.length > 0) saveData(DATA_STORAGE_KEY, kpiData);
   }, [kpiData]);
 
   useEffect(() => {
-      saveData('kpi_config', dsConfig);
+      saveData(CONFIG_STORAGE_KEY, dsConfig);
   }, [dsConfig]);
 
+  // Permission Guard
+  if (mode === 'group' && !canViewGroup) {
+      return (
+          <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl shadow-sm">
+              <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><Users size={32} /></div>
+              <h3 className="text-lg font-bold text-slate-800">Không có quyền truy cập</h3>
+              <p className="text-slate-500">Chỉ Giám đốc, PGĐ, Trưởng/Phó phòng mới được xem KPI Tập thể toàn tỉnh.</p>
+          </div>
+      );
+  }
 
   // --- GOOGLE SHEET LOGIC ---
 
@@ -128,10 +169,8 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
       try {
           const rawData = await fetchCSV(dsConfig.url);
           
-          // Transform Data using Mapping
           const transformedData = rawData.map((row: any) => {
               const newRow: any = {};
-              // Reverse look up from mapping: SystemKey -> SheetHeader
               Object.entries(dsConfig.mapping).forEach(([sysKey, sheetHeader]) => {
                   const header = sheetHeader as string;
                   if (header && row[header] !== undefined) {
@@ -141,8 +180,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
               return newRow;
           });
 
-          // Reuse the process logic
-          processImportData(transformedData, false); // False to suppress alert
+          processImportData(transformedData, false);
           
           setDsConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
           alert("Đồng bộ dữ liệu thành công!");
@@ -163,39 +201,6 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
 
   // --- EXISTING LOGIC ---
 
-  const filteredData = kpiData.filter(item => {
-      if (filterUnit !== 'all') {
-          const unit = units.find(u => u.id === item.unitId);
-          if (item.unitId !== filterUnit && unit?.parentId !== filterUnit) return false;
-      }
-      return true;
-  });
-
-  const top5 = filteredData.map(item => {
-      const t = item.targets[filterKey] || { target: 0, actual: 0 };
-      const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
-      return { ...item, percent: Math.round(percent), actual: t.actual, target: t.target };
-  }).sort((a, b) => b.percent - a.percent).slice(0, 5);
-
-  const bottom5 = filteredData.map(item => {
-      const t = item.targets[filterKey] || { target: 0, actual: 0 };
-      const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
-      return { ...item, percent: Math.round(percent), actual: t.actual, target: t.target };
-  }).sort((a, b) => a.percent - b.percent).slice(0, 5);
-
-  const handleDownloadTemplate = () => {
-    const headers = ['HRM_CODE', 'HO_TEN', ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_ACTUAL`)];
-    const data = users.map(u => {
-        const row: any = { HRM_CODE: u.hrmCode, HO_TEN: u.fullName };
-        Object.keys(KPI_KEYS).forEach(k => { row[`${k.toUpperCase()}_TARGET`] = 0; row[`${k.toUpperCase()}_ACTUAL`] = 0; });
-        return row;
-    });
-    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "KPI_Template");
-    XLSX.writeFile(wb, "VNPT_KPI_Template.xlsx");
-  };
-
   const processImportData = (jsonData: any[], showAlert = true) => {
       if (!jsonData || jsonData.length === 0) return;
       const newKpiData = [...kpiData];
@@ -203,43 +208,117 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
 
       jsonData.forEach((row: any) => {
           const normalizedRow: any = {};
-          // Normalize input keys to uppercase to match System Keys
           Object.keys(row).forEach(k => normalizedRow[k.toUpperCase()] = row[k]);
           
-          // Priority: Mapped HRM_CODE -> Normalized HRM_CODE
-          const hrmCode = normalizedRow['HRM_CODE']; 
-          if (!hrmCode) return;
+          const idValue = normalizedRow[ID_KEY]; 
+          if (!idValue) return;
 
-          const userIndex = newKpiData.findIndex(k => k.hrmCode === String(hrmCode));
-          const user = users.find(u => u.hrmCode === String(hrmCode));
-          
-          if (user) {
-              matchCount++;
-              const targets: any = userIndex >= 0 ? { ...newKpiData[userIndex].targets } : {};
-              Object.keys(KPI_KEYS).forEach(key => {
-                  const targetKey = `${key.toUpperCase()}_TARGET`;
-                  const actualKey = `${key.toUpperCase()}_ACTUAL`;
-                  
-                  if (normalizedRow[targetKey] !== undefined) {
-                       if (!targets[key]) targets[key] = { target: 0, actual: 0 };
-                       targets[key].target = Number(normalizedRow[targetKey]) || 0;
-                  }
-                  if (normalizedRow[actualKey] !== undefined) {
-                       if (!targets[key]) targets[key] = { target: 0, actual: 0 };
-                       targets[key].actual = Number(normalizedRow[actualKey]) || 0;
-                  }
-              });
-              const record: KPIData = { hrmCode: user.hrmCode, fullName: user.fullName, unitId: user.unitId, targets: targets };
-              if (userIndex >= 0) newKpiData[userIndex] = record;
-              else newKpiData.push(record);
+          let targetIndex = -1;
+          let entityName = '';
+          let entityUnitId = ''; // Only for personal
+
+          if (mode === 'personal') {
+              targetIndex = newKpiData.findIndex(k => k.hrmCode === String(idValue));
+              const user = users.find(u => u.hrmCode === String(idValue));
+              if (user) {
+                  matchCount++;
+                  entityName = user.fullName;
+                  entityUnitId = user.unitId;
+              } else return;
+          } else {
+               targetIndex = newKpiData.findIndex(k => k.unitCode === String(idValue));
+               const unit = units.find(u => u.code === String(idValue));
+               if (unit) {
+                   matchCount++;
+                   entityName = unit.name;
+               } else return;
           }
+
+          const targets: any = targetIndex >= 0 ? { ...newKpiData[targetIndex].targets } : {};
+          Object.keys(KPI_KEYS).forEach(key => {
+              const targetKey = `${key.toUpperCase()}_TARGET`;
+              const actualKey = `${key.toUpperCase()}_ACTUAL`;
+              
+              if (normalizedRow[targetKey] !== undefined) {
+                   if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                   targets[key].target = Number(normalizedRow[targetKey]) || 0;
+              }
+              if (normalizedRow[actualKey] !== undefined) {
+                   if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                   targets[key].actual = Number(normalizedRow[actualKey]) || 0;
+              }
+          });
+
+          let record: any;
+          if (mode === 'personal') {
+               record = { hrmCode: String(idValue), fullName: entityName, unitId: entityUnitId, targets: targets };
+          } else {
+               record = { unitCode: String(idValue), unitName: entityName, targets: targets };
+          }
+
+          if (targetIndex >= 0) newKpiData[targetIndex] = record;
+          else newKpiData.push(record);
       });
+      
       setKpiData(newKpiData);
       if (showAlert) {
-          alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} nhân sự.`);
+          alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} mục.`);
           setActiveTab('eval');
       }
   };
+
+  const handleDownloadTemplate = () => {
+    const headers = [ID_KEY, mode === 'personal' ? 'HO_TEN' : 'TEN_DON_VI', ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_ACTUAL`)];
+    
+    let data = [];
+    if (mode === 'personal') {
+        data = users.map(u => {
+            const row: any = { [ID_KEY]: u.hrmCode, HO_TEN: u.fullName };
+            Object.keys(KPI_KEYS).forEach(k => { row[`${k.toUpperCase()}_TARGET`] = 0; row[`${k.toUpperCase()}_ACTUAL`] = 0; });
+            return row;
+        });
+    } else {
+        data = units.map(u => {
+            const row: any = { [ID_KEY]: u.code, TEN_DON_VI: u.name };
+            Object.keys(KPI_KEYS).forEach(k => { row[`${k.toUpperCase()}_TARGET`] = 0; row[`${k.toUpperCase()}_ACTUAL`] = 0; });
+            return row;
+        });
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "KPI_Template");
+    XLSX.writeFile(wb, `VNPT_KPI_${mode}.xlsx`);
+  };
+
+  const filteredData = kpiData.filter(item => {
+      // Group mode always shows all units for leaders
+      if (mode === 'group') return true;
+
+      // Personal mode: Filter by unit
+      if (filterUnit !== 'all') {
+          const unit = units.find(u => u.id === item.unitId);
+          if (item.unitId !== filterUnit && unit?.parentId !== filterUnit) return false;
+      }
+      return true;
+  });
+
+  const getChartData = (data: any[]) => {
+      return data.map(item => {
+          const t = item.targets[filterKey] || { target: 0, actual: 0 };
+          const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
+          return { 
+              name: mode === 'personal' ? item.fullName : item.unitName,
+              percent: Math.round(percent), 
+              actual: t.actual, 
+              target: t.target 
+          };
+      }).sort((a, b) => b.percent - a.percent);
+  };
+
+  const chartData = getChartData(filteredData);
+  const top5 = chartData.slice(0, 5);
+  const bottom5 = [...chartData].sort((a, b) => a.percent - b.percent).slice(0, 5);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -276,14 +355,19 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
     <div className="space-y-6 animate-fade-in">
        <div className="flex flex-col md:flex-row justify-between items-end gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-slate-800">Bộ chỉ số điều hành</h2>
-            <p className="text-sm text-slate-500">Giao kế hoạch và đánh giá BSC/KPI nhân viên</p>
+            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                {mode === 'group' ? <Users className="text-blue-600"/> : <ArrowRightLeft className="text-green-600"/>}
+                {mode === 'group' ? 'KPI Tập thể (Đơn vị)' : 'KPI Cá nhân (Nhân viên)'}
+            </h2>
+            <p className="text-sm text-slate-500">
+                {mode === 'group' ? 'Theo dõi chỉ số điều hành của các đơn vị toàn tỉnh' : 'Giao kế hoạch và đánh giá BSC/KPI từng nhân viên'}
+            </p>
           </div>
           <div className="flex bg-slate-200 p-1 rounded-lg">
             <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá</button>
             <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Excel)</button>
             
-            {/* ONLY ADMIN CAN SEE THIS TAB */}
+            {/* ADMIN CAN CONFIG */}
             {isAdmin && (
                 <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Cấu hình (Google Sheet)</button>
             )}
@@ -295,86 +379,52 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                <div className="p-6 border-b border-slate-100">
                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4"><Database className="text-blue-600"/> Liên kết Google Sheet (CSV)</h3>
-                   
-                   <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6 text-sm text-blue-800">
-                       <p className="font-bold mb-2">Hướng dẫn lấy link (Chỉ hỗ trợ Publish to Web):</p>
-                       <ol className="list-decimal pl-5 space-y-1">
-                           <li>Mở file Google Sheet chứa dữ liệu KPI.</li>
-                           <li>Chọn <strong>File (Tệp)</strong> &gt; <strong>Share (Chia sẻ)</strong> &gt; <strong>Publish to web (Công bố lên web)</strong>.</li>
-                           <li>Trong hộp thoại: Chọn Sheet cần lấy và chọn định dạng <strong>Comma-separated values (.csv)</strong>.</li>
-                           <li>Nhấn Publish và copy đường link sinh ra dán vào bên dưới.</li>
-                       </ol>
-                   </div>
-
                    <div className="flex gap-4 items-end mb-4">
                        <div className="flex-1">
                            <label className="block text-sm font-bold text-slate-700 mb-1">Đường dẫn CSV (Publish to web)</label>
                            <div className="flex gap-2">
-                               <div className="relative flex-1">
-                                   <Link className="absolute left-3 top-3 text-slate-400" size={18} />
-                                   <input 
-                                       type="text" 
-                                       className="w-full pl-10 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
-                                       placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
-                                       value={dsConfig.url}
-                                       onChange={e => setDsConfig({...dsConfig, url: e.target.value})}
-                                   />
-                               </div>
+                               <input 
+                                   type="text" 
+                                   className="w-full pl-4 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                                   placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                   value={dsConfig.url}
+                                   onChange={e => setDsConfig({...dsConfig, url: e.target.value})}
+                               />
                                <button 
                                    onClick={checkConnection}
                                    disabled={isCheckingLink}
                                    className="px-4 py-2 bg-slate-800 text-white rounded-lg font-bold hover:bg-slate-900 flex items-center gap-2 whitespace-nowrap"
                                >
                                    {isCheckingLink ? <RefreshCw className="animate-spin" size={18}/> : <Check size={18}/>}
-                                   Kiểm tra kết nối
+                                   Kiểm tra
                                </button>
                            </div>
                        </div>
                    </div>
-
-                   {dsConfig.lastSync && (
-                       <div className="text-xs text-slate-500 italic mb-4">
-                           Đồng bộ lần cuối: {dsConfig.lastSync}
-                       </div>
-                   )}
                </div>
 
                {/* MAPPING SECTION */}
                <div className="p-6 bg-slate-50">
-                   <div className="flex justify-between items-center mb-4">
-                       <h4 className="font-bold text-slate-700 flex items-center gap-2"><ArrowRightLeft size={18} /> Ánh xạ dữ liệu (Mapping)</h4>
-                       {sheetHeaders.length > 0 && (
-                           <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-bold">Đã tìm thấy {sheetHeaders.length} cột từ Google Sheet</span>
-                       )}
-                   </div>
-                   
-                   {sheetHeaders.length === 0 ? (
-                       <div className="text-center py-8 text-slate-400 border-2 border-dashed rounded-lg">
-                           Vui lòng nhập Link và nhấn "Kiểm tra kết nối" để tải danh sách cột.
-                       </div>
-                   ) : (
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                           {systemFields.map((field) => (
-                               <div key={field.key} className="flex items-center gap-4 bg-white p-3 rounded border border-slate-200">
-                                   <div className="w-1/2">
-                                       <div className="text-sm font-bold text-slate-700">{field.label}</div>
-                                       <div className="text-xs text-slate-400 font-mono">{field.key}</div>
-                                   </div>
-                                   <div className="text-slate-400"><ArrowRightLeft size={16}/></div>
-                                   <div className="w-1/2">
-                                       <select 
-                                           className="w-full border rounded p-2 text-sm outline-none focus:border-blue-500"
-                                           value={dsConfig.mapping[field.key] || ''}
-                                           onChange={(e) => updateMapping(field.key, e.target.value)}
-                                       >
-                                           <option value="">-- Chọn cột --</option>
-                                           {sheetHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                                       </select>
-                                   </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                       {systemFields.map((field) => (
+                           <div key={field.key} className="flex items-center gap-4 bg-white p-3 rounded border border-slate-200">
+                               <div className="w-1/2">
+                                   <div className="text-sm font-bold text-slate-700">{field.label}</div>
+                                   <div className="text-xs text-slate-400 font-mono">{field.key}</div>
                                </div>
-                           ))}
-                       </div>
-                   )}
+                               <div className="w-1/2">
+                                   <select 
+                                       className="w-full border rounded p-2 text-sm outline-none focus:border-blue-500"
+                                       value={dsConfig.mapping[field.key] || ''}
+                                       onChange={(e) => updateMapping(field.key, e.target.value)}
+                                   >
+                                       <option value="">-- Chọn cột --</option>
+                                       {sheetHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                   </select>
+                               </div>
+                           </div>
+                       ))}
+                   </div>
                </div>
                
                <div className="p-4 border-t bg-white flex justify-end">
@@ -384,7 +434,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
                        className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                    >
                        {isSyncing ? <RefreshCw className="animate-spin" size={20}/> : <RefreshCw size={20}/>}
-                       Lưu cấu hình & Đồng bộ ngay
+                       Lưu cấu hình & Đồng bộ
                    </button>
                </div>
            </div>
@@ -395,38 +445,19 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
              {/* Left: Actions */}
              <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center flex flex-col items-center justify-center min-h-[400px]">
                   <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4"><FileUp size={32} /></div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập dữ liệu KPI (Excel)</h3>
-                  <p className="text-slate-500 mb-6 max-w-sm">Hỗ trợ file Excel (.xlsx) hoặc copy trực tiếp từ Google Sheet. Yêu cầu trường khóa là <strong>HRM_CODE</strong>.</p>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập liệu {mode === 'group' ? 'Tập thể' : 'Cá nhân'}</h3>
+                  <p className="text-slate-500 mb-6 max-w-sm">Hỗ trợ file Excel (.xlsx) hoặc copy trực tiếp từ Google Sheet. Trường khóa: <strong>{ID_KEY}</strong>.</p>
                   
                   <div className="flex flex-col gap-3 w-full max-w-xs">
-                      <input 
-                          type="file" 
-                          ref={fileInputRef} 
-                          onChange={handleFileUpload} 
-                          className="hidden" 
-                          accept=".xlsx, .xls" 
-                      />
-                      
-                      <button 
-                        onClick={() => fileInputRef.current?.click()} 
-                        className="bg-blue-600 text-white px-4 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center gap-2 shadow-md transition-transform active:scale-95"
-                      >
+                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
+                      <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 text-white px-4 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center gap-2 shadow-md">
                           <FileSpreadsheet size={20} /> Chọn File Excel
                       </button>
-
-                      <button 
-                        onClick={() => setPasteModalOpen(true)}
-                        className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-3 rounded-lg font-bold hover:bg-slate-50 flex items-center justify-center gap-2"
-                      >
+                      <button onClick={() => setPasteModalOpen(true)} className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-3 rounded-lg font-bold hover:bg-slate-50 flex items-center justify-center gap-2">
                           <ClipboardPaste size={20} /> Paste từ Google Sheet
                       </button>
-
                       <div className="my-2 border-t w-full"></div>
-
-                      <button 
-                        onClick={handleDownloadTemplate}
-                        className="text-slate-500 hover:text-blue-600 text-sm flex items-center justify-center gap-2"
-                      >
+                      <button onClick={handleDownloadTemplate} className="text-slate-500 hover:text-blue-600 text-sm flex items-center justify-center gap-2">
                           <Download size={16} /> Tải file mẫu chuẩn
                       </button>
                   </div>
@@ -436,18 +467,13 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
              <div className="bg-slate-50 p-8 rounded-xl border border-slate-200">
                 <h4 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2"><AlertOctagon size={20} className="text-orange-500"/> Hướng dẫn định dạng</h4>
                 <ul className="space-y-3 text-sm text-slate-600 list-disc pl-5">
-                    <li>Dòng đầu tiên của file phải là dòng tiêu đề (Header).</li>
-                    <li>Bắt buộc có cột <strong>HRM_CODE</strong> để định danh nhân viên.</li>
-                    <li>Với mỗi chỉ số (Ví dụ: Fiber), cần 2 cột tương ứng:
+                    <li>Dòng đầu tiên là tiêu đề (Header).</li>
+                    <li>Bắt buộc có cột <strong>{ID_KEY}</strong> ({ID_LABEL}).</li>
+                    <li>Với mỗi chỉ số (Ví dụ: Fiber), cần 2 cột:
                         <ul className="list-circle pl-5 mt-1 text-slate-500">
-                            <li><code>FIBER_TARGET</code> (Chỉ tiêu giao)</li>
-                            <li><code>FIBER_ACTUAL</code> (Thực hiện được)</li>
+                            <li><code>FIBER_TARGET</code> (Chỉ tiêu)</li>
+                            <li><code>FIBER_ACTUAL</code> (Thực hiện)</li>
                         </ul>
-                    </li>
-                    <li>Các mã chỉ số hỗ trợ:
-                        <div className="grid grid-cols-2 gap-2 mt-2 font-mono text-xs bg-white p-2 rounded border">
-                           {Object.keys(KPI_KEYS).map(k => <div key={k}><span className="font-bold">{k.toUpperCase()}</span>_TARGET</div>)}
-                        </div>
                     </li>
                 </ul>
              </div>
@@ -460,30 +486,33 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
             <div className="bg-white p-4 rounded-xl shadow-sm border flex flex-wrap gap-4 items-center justify-between">
                <div className="flex gap-4 items-center">
                     <div className="flex items-center gap-2 text-sm text-slate-600 font-bold"><Filter size={16} /> Lọc:</div>
-                    <select className="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={filterUnit} onChange={e => setFilterUnit(e.target.value)}>
-                        <option value="all">-- Tất cả đơn vị --</option>
-                        {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
+                    {/* Only show Unit Filter in Personal Mode */}
+                    {mode === 'personal' && (
+                        <select className="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" value={filterUnit} onChange={e => setFilterUnit(e.target.value)}>
+                            <option value="all">-- Tất cả đơn vị --</option>
+                            {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </select>
+                    )}
 
                     <select className="border rounded-lg px-3 py-1.5 text-sm bg-blue-50 text-blue-700 font-medium outline-none focus:ring-2 focus:ring-blue-500" value={filterKey} onChange={e => setFilterKey(e.target.value as KPIKey)}>
                         {Object.entries(KPI_KEYS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
                </div>
                <div className="text-sm text-slate-500 italic">
-                   {dsConfig.lastSync ? `Đồng bộ Google Sheet: ${dsConfig.lastSync}` : 'Dữ liệu được lưu tự động'}
+                   {dsConfig.lastSync ? `Đồng bộ Google Sheet: ${dsConfig.lastSync}` : 'Dữ liệu lưu cục bộ'}
                </div>
             </div>
 
             {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                 <h3 className="font-bold text-lg mb-4 text-green-700">Top 5 Nhân viên Xuất sắc</h3>
+                 <h3 className="font-bold text-lg mb-4 text-green-700">Top 5 {mode === 'personal' ? 'Nhân viên' : 'Đơn vị'} Xuất sắc</h3>
                  <div className="h-64">
                    <ResponsiveContainer width="100%" height="100%">
                      <BarChart data={top5} layout="vertical" margin={{left: 40}}>
                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                        <XAxis type="number" hide />
-                       <YAxis dataKey="fullName" type="category" width={100} tick={{fontSize: 11}} />
+                       <YAxis dataKey="name" type="category" width={120} tick={{fontSize: 11}} />
                        <Tooltip cursor={{fill: '#f0fdf4'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
                        <Bar dataKey="percent" fill="#22c55e" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                      </BarChart>
@@ -492,13 +521,13 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
                </div>
 
                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                  <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><AlertOctagon size={20}/> Top 5 Cần cố gắng</h3>
+                  <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><AlertOctagon size={20}/> Top 5 {mode === 'personal' ? 'Cần cố gắng' : 'Thấp nhất'}</h3>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={bottom5} layout="vertical" margin={{left: 40}}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" hide />
-                        <YAxis dataKey="fullName" type="category" width={100} tick={{fontSize: 11}} />
+                        <YAxis dataKey="name" type="category" width={120} tick={{fontSize: 11}} />
                         <Tooltip cursor={{fill: '#fef2f2'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
                         <Bar dataKey="percent" fill="#ef4444" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                       </BarChart>
@@ -517,8 +546,8 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
                  <table className="w-full text-sm text-left">
                    <thead className="bg-slate-100 text-slate-700 font-bold">
                      <tr>
-                       <th className="p-3">Nhân viên</th>
-                       <th className="p-3">Đơn vị</th>
+                       <th className="p-3">{mode === 'personal' ? 'Nhân viên' : 'Đơn vị'}</th>
+                       <th className="p-3">Mã</th>
                        <th className="p-3 text-right">Kế hoạch (Target)</th>
                        <th className="p-3 text-right">Thực hiện (Actual)</th>
                        <th className="p-3 text-center">% Hoàn thành</th>
@@ -529,14 +558,13 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
                      {filteredData.length > 0 ? filteredData.map((item, index) => {
                          const targetData = item.targets[filterKey] || { target: 0, actual: 0 };
                          const percent = targetData.target ? (targetData.actual / targetData.target) * 100 : 0;
-                         const unitName = units.find(u => u.id === item.unitId)?.name;
+                         const idVal = mode === 'personal' ? item.hrmCode : item.unitCode;
+                         const nameVal = mode === 'personal' ? item.fullName : item.unitName;
+
                          return (
                            <tr key={index} className="hover:bg-slate-50">
-                             <td className="p-3">
-                                 <div className="font-medium text-slate-800">{item.fullName}</div>
-                                 <div className="text-xs text-slate-400">{item.hrmCode}</div>
-                             </td>
-                             <td className="p-3 text-slate-500 text-xs">{unitName}</td>
+                             <td className="p-3 font-medium text-slate-800">{nameVal}</td>
+                             <td className="p-3 text-xs text-slate-400">{idVal}</td>
                              <td className="p-3 text-right font-mono">{targetData.target.toLocaleString()}</td>
                              <td className="p-3 text-right font-mono font-bold text-blue-700">{targetData.actual.toLocaleString()}</td>
                              <td className="p-3 text-center">
@@ -550,7 +578,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
                            </tr>
                          )
                      }) : (
-                         <tr><td colSpan={6} className="p-8 text-center text-slate-400">Không có dữ liệu phù hợp. Hãy Import file Excel hoặc kiểm tra bộ lọc.</td></tr>
+                         <tr><td colSpan={6} className="p-8 text-center text-slate-400">Không có dữ liệu phù hợp.</td></tr>
                      )}
                    </tbody>
                  </table>
@@ -564,23 +592,21 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
            <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
                <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl overflow-hidden animate-fade-in">
                    <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
-                       <h3 className="font-bold text-lg">Paste dữ liệu từ Excel/Google Sheet</h3>
+                       <h3 className="font-bold text-lg">Paste dữ liệu {mode === 'group' ? 'Tập thể' : 'Cá nhân'}</h3>
                        <button onClick={() => setPasteModalOpen(false)}><span className="text-2xl">&times;</span></button>
                    </div>
                    <div className="p-4">
-                       <p className="text-sm text-slate-500 mb-2">Copy vùng dữ liệu từ Google Sheet (bao gồm cả dòng tiêu đề) và dán vào bên dưới:</p>
+                       <p className="text-sm text-slate-500 mb-2">Copy từ Google Sheet (kèm Header). Cột khóa: <strong>{ID_KEY}</strong></p>
                        <textarea 
                            className="w-full h-64 border rounded-lg p-3 font-mono text-xs bg-slate-50"
-                           placeholder={`HRM_CODE\tFIBER_TARGET\tFIBER_ACTUAL\nVNPT001\t50\t45\n...`}
+                           placeholder={`${ID_KEY}\tFIBER_TARGET\tFIBER_ACTUAL\n...`}
                            value={pasteContent}
                            onChange={e => setPasteContent(e.target.value)}
                        ></textarea>
                    </div>
                    <div className="p-4 border-t flex justify-end gap-3">
-                       <button onClick={() => setPasteModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Hủy bỏ</button>
-                       <button onClick={handlePasteData} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2">
-                           <Save size={18} /> Xử lý dữ liệu
-                       </button>
+                       <button onClick={() => setPasteModalOpen(false)} className="px-4 py-2 text-slate-600">Hủy</button>
+                       <button onClick={handlePasteData} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Lưu dữ liệu</button>
                    </div>
                </div>
            </div>

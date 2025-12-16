@@ -5,9 +5,9 @@ import Dashboard from './modules/Dashboard';
 import Admin from './modules/Admin';
 import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
-import { loadData, saveData, mockTasks, mockUnits, mockUsers } from './utils/mockData';
-import { Task, Unit, User } from './types';
-import { Search, User as UserIcon, LogOut, Lock, RotateCcw } from 'lucide-react';
+import { supabase } from './utils/supabaseClient'; // Import Supabase
+import { Task, Unit, User, Role } from './types';
+import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // Authentication State
@@ -16,30 +16,88 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [showChangePass, setShowChangePass] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(true); // Loading state
 
   // App State
   const [activeModule, setActiveModule] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  // Persistent Data State
+  // Data State
   const [tasks, setTasks] = useState<Task[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
-  // Load Data on Mount
-  useEffect(() => {
-      setTasks(loadData('tasks', mockTasks));
-      setUnits(loadData('units', mockUnits));
-      setUsers(loadData('users', mockUsers));
-  }, []);
+  // --- HÀM 1: TẢI DỮ LIỆU TỪ SUPABASE ---
+  const fetchInitialData = async () => {
+      setIsLoading(true);
+      try {
+          // 1. Lấy Units
+          const { data: unitsData } = await supabase.from('units').select('*').order('level', { ascending: true });
+          // Ánh xạ (Map) từ Database (snake_case) sang App (camelCase)
+          const mappedUnits: Unit[] = (unitsData || []).map((u: any) => ({
+              id: u.id,
+              code: u.code,
+              name: u.name,
+              parentId: u.parent_id,
+              managerIds: u.manager_ids || [],
+              level: u.level,
+              address: u.address,
+              phone: u.phone
+          }));
+          setUnits(mappedUnits);
 
-  // Save Data on Change
-  useEffect(() => saveData('tasks', tasks), [tasks]);
-  useEffect(() => saveData('units', units), [units]);
-  useEffect(() => saveData('users', users), [users]);
+          // 2. Lấy Users
+          const { data: usersData } = await supabase.from('users').select('*');
+          const mappedUsers: User[] = (usersData || []).map((u: any) => ({
+              id: u.id,
+              hrmCode: u.hrm_code,
+              fullName: u.full_name,
+              username: u.username,
+              password: u.password,
+              title: u.title,
+              unitId: u.unit_id,
+              isFirstLogin: u.is_first_login,
+              canManageUsers: u.can_manage,
+              avatar: u.avatar
+          }));
+          setUsers(mappedUsers);
+
+          // 3. Lấy Tasks
+          const { data: tasksData } = await supabase.from('tasks').select('*');
+          const mappedTasks: Task[] = (tasksData || []).map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              content: t.content,
+              status: t.status,
+              priority: t.priority,
+              progress: t.progress,
+              deadline: t.deadline,
+              assignerId: t.assigner_id,
+              primaryAssigneeIds: t.primary_ids || [],
+              supportAssigneeIds: t.support_ids || [],
+              type: t.type || 'Single',
+              createdAt: t.created_at,
+              extensionRequest: t.ext_request,
+              projectId: t.project_id
+          }));
+          setTasks(mappedTasks);
+
+      } catch (error) {
+          console.error("Lỗi tải dữ liệu:", error);
+          alert("Không thể kết nối đến máy chủ dữ liệu!");
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  // Chạy hàm tải dữ liệu khi mở App
+  useEffect(() => {
+      fetchInitialData();
+  }, []);
 
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
+      // Logic đăng nhập vẫn so sánh trên state 'users' đã tải về
       const user = users.find(u => u.username === loginUsername && u.password === loginPassword);
       if (user) {
           setCurrentUser(user);
@@ -50,45 +108,52 @@ const App: React.FC = () => {
   };
 
   const handleResetData = () => {
-    if (confirm('Thao tác này sẽ xóa mọi dữ liệu bạn đã nhập và đưa hệ thống về trạng thái ban đầu (Admin password: 123). Bạn có chắc chắn không?')) {
-        localStorage.clear();
-        window.location.reload();
-    }
+    alert("Tính năng Reset dữ liệu giả không khả dụng khi dùng Database thật.");
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
       const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
       if (!regex.test(newPassword)) {
-          alert("Mật khẩu phải có ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số và ký tự đặc biệt.");
-          return;
-      }
-      if (newPassword === '123456') {
-          alert("Mật khẩu mới không được trùng mật khẩu mặc định.");
+          alert("Mật khẩu yếu!");
           return;
       }
       
-      const updatedUser = { ...currentUser!, password: newPassword, isFirstLogin: false };
-      const updatedUsers = users.map(u => u.id === currentUser!.id ? updatedUser : u);
-      setUsers(updatedUsers);
-      setCurrentUser(updatedUser);
-      setShowChangePass(false);
-      alert("Đổi mật khẩu thành công!");
+      // Gọi API cập nhật mật khẩu
+      const { error } = await supabase
+        .from('users')
+        .update({ password: newPassword, is_first_login: false })
+        .eq('id', currentUser!.id);
+
+      if (!error) {
+          // Cập nhật state local
+          const updatedUser = { ...currentUser!, password: newPassword, isFirstLogin: false };
+          setUsers(users.map(u => u.id === currentUser!.id ? updatedUser : u));
+          setCurrentUser(updatedUser);
+          setShowChangePass(false);
+          alert("Đổi mật khẩu thành công!");
+      } else {
+          alert("Lỗi khi lưu mật khẩu: " + error.message);
+      }
   };
 
   const renderModule = () => {
+    if (isLoading) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-blue-600" size={48} /></div>;
+
     switch (activeModule) {
       case 'dashboard':
-        return <Dashboard tasks={tasks} />;
+        return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
       case 'admin':
         return currentUser?.title.includes('Admin') || currentUser?.canManageUsers ? (
             <Admin units={units} users={users} currentUser={currentUser} setUnits={setUnits} setUsers={setUsers} />
         ) : <div className="p-8 text-center text-red-500">Bạn không có quyền truy cập module này.</div>;
       case 'tasks':
         return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
-      case 'kpi':
-        return <KPI users={users} units={units} currentUser={currentUser!} />;
+      case 'kpi-personal':
+        return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
+      case 'kpi-group':
+        return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
       default:
-        return <Dashboard tasks={tasks} />;
+        return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
     }
   };
 
@@ -98,23 +163,23 @@ const App: React.FC = () => {
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
                   <h1 className="text-2xl font-bold text-blue-700 text-center mb-6">VNPT Quảng Ninh Task Manager</h1>
-                  <form onSubmit={handleLogin} className="space-y-4">
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Tên đăng nhập</label>
-                          <input type="text" className="w-full border rounded-lg p-3" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
+                  {isLoading ? (
+                      <div className="text-center py-8 text-slate-500 flex flex-col items-center">
+                          <Loader2 className="animate-spin mb-2" /> Đang kết nối máy chủ...
                       </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu</label>
-                          <input type="password" className="w-full border rounded-lg p-3" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-                      </div>
-                      <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition">Đăng nhập</button>
-                      
-                      <div className="text-center text-xs text-slate-400 mt-4 border-t pt-4">
-                          <button type="button" onClick={handleResetData} className="text-red-500 hover:text-red-700 underline flex items-center justify-center gap-1 w-full font-medium">
-                            <RotateCcw size={14} /> Reset Dữ liệu Demo
-                          </button>
-                      </div>
-                  </form>
+                  ) : (
+                    <form onSubmit={handleLogin} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Tên đăng nhập</label>
+                            <input type="text" className="w-full border rounded-lg p-3" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu</label>
+                            <input type="password" className="w-full border rounded-lg p-3" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
+                        </div>
+                        <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition">Đăng nhập</button>
+                    </form>
+                  )}
               </div>
           </div>
       );
@@ -127,7 +192,7 @@ const App: React.FC = () => {
               <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md text-center">
                   <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4"><Lock size={32}/></div>
                   <h2 className="text-xl font-bold mb-2">Yêu cầu đổi mật khẩu</h2>
-                  <p className="text-sm text-slate-500 mb-6">Đây là lần đăng nhập đầu tiên hoặc mật khẩu đã được reset. Vui lòng đổi mật khẩu mới.</p>
+                  <p className="text-sm text-slate-500 mb-6">Lần đầu đăng nhập, vui lòng đổi mật khẩu.</p>
                   <input type="password" placeholder="Mật khẩu mới..." className="w-full border rounded-lg p-3 mb-4" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                   <button onClick={handleChangePassword} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold">Cập nhật mật khẩu</button>
               </div>
@@ -147,7 +212,6 @@ const App: React.FC = () => {
            </div>
            
            <div className="flex items-center space-x-4">
-             {/* User Info */}
              <div className="flex items-center gap-3 text-right">
                <div className="hidden md:block">
                  <div className="text-sm font-bold text-slate-800">{currentUser.fullName}</div>
@@ -158,10 +222,8 @@ const App: React.FC = () => {
                </div>
              </div>
              
-             {/* Separator */}
              <div className="h-8 w-px bg-slate-200 mx-1"></div>
 
-             {/* Logout Button */}
              <button 
                 onClick={() => setCurrentUser(null)} 
                 className="flex items-center gap-2 text-slate-500 hover:text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors text-sm font-medium"

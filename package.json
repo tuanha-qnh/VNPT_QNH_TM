@@ -15,7 +15,8 @@
     "lucide-react": "0.378.0",
     "xlsx": "0.18.5",
     "vite": "5.2.0",
-    "@vitejs/plugin-react": "4.2.0"
+    "@vitejs/plugin-react": "4.2.0",
+    "@supabase/supabase-js": "^2.87.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

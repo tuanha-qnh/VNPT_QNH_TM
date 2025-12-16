@@ -1,3 +1,4 @@
+
 export enum Role {
   DIRECTOR = 'Giám đốc',
   VICE_DIRECTOR = 'Phó Giám đốc',
@@ -73,6 +74,17 @@ export interface KPIData {
   hrmCode: string;
   fullName: string;
   unitId: string;
+  targets: {
+    [key: string]: {
+      target: number;
+      actual: number;
+    }
+  }
+}
+
+export interface GroupKPIData {
+  unitCode: string;
+  unitName: string;
   targets: {
     [key: string]: {
       target: number;
