@@ -16,11 +16,11 @@ interface AdminProps {
 const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setUsers }) => {
   const [activeTab, setActiveTab] = useState<'units' | 'users'>('units');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false); // State cho Import Modal
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false); // Loading state for save/delete
+  const [isProcessing, setIsProcessing] = useState(false); 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isSuperAdmin = currentUser.hrmCode === 'ADMIN'; 
@@ -68,7 +68,106 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return code;
   };
 
-  // --- THAY ĐỔI LỚN NHẤT: LOGIC LƯU VÀO DB ---
+  // --- LOGIC IMPORT EXCEL ---
+  
+  // 1. Tải file mẫu
+  const handleDownloadTemplate = () => {
+      const headers = ['HRM_CODE', 'FULL_NAME', 'EMAIL', 'USERNAME', 'PASSWORD', 'TITLE', 'UNIT_CODE'];
+      const sampleData = [
+          ['VNPT001', 'Nguyễn Văn A', 'vana@vnpt.vn', 'vana', '123456', 'Nhân viên', 'VNPT_QN'],
+          ['VNPT002', 'Trần Thị B', 'thib@vnpt.vn', 'thib', '123456', 'Trưởng phòng', 'QNH001']
+      ];
+      
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "User_Template");
+      XLSX.writeFile(wb, "Mau_Nhap_Nhan_Su.xlsx");
+  };
+
+  // 2. Xử lý file Upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+          try {
+              setIsProcessing(true);
+              const bstr = evt.target?.result;
+              const wb = XLSX.read(bstr, { type: 'binary' });
+              const wsName = wb.SheetNames[0];
+              const ws = wb.Sheets[wsName];
+              const data = XLSX.utils.sheet_to_json(ws);
+
+              if (data.length === 0) throw new Error("File không có dữ liệu!");
+
+              const newUsersPayload: any[] = [];
+              const errors: string[] = [];
+
+              data.forEach((row: any, index) => {
+                  const hrmCode = row['HRM_CODE'];
+                  const username = row['USERNAME'];
+                  const unitCode = row['UNIT_CODE'];
+                  
+                  if (!hrmCode || !username || !unitCode) {
+                      errors.push(`Dòng ${index + 2}: Thiếu HRM_CODE, USERNAME hoặc UNIT_CODE`);
+                      return;
+                  }
+
+                  // Tìm Unit ID từ Unit Code
+                  const targetUnit = units.find(u => u.code === unitCode);
+                  if (!targetUnit) {
+                      errors.push(`Dòng ${index + 2}: Mã đơn vị '${unitCode}' không tồn tại trong hệ thống.`);
+                      return;
+                  }
+
+                  newUsersPayload.push({
+                      hrm_code: String(hrmCode),
+                      full_name: row['FULL_NAME'] || 'Chưa đặt tên',
+                      email: row['EMAIL'] || '',
+                      username: String(username),
+                      password: String(row['PASSWORD'] || '123456'),
+                      title: row['TITLE'] || 'Nhân viên',
+                      unit_id: targetUnit.id,
+                      can_manage: false,
+                      is_first_login: true
+                  });
+              });
+
+              if (errors.length > 0) {
+                  alert(`Có lỗi trong file:\n${errors.join('\n')}\n\nCác dòng hợp lệ vẫn sẽ được thêm.`);
+              }
+
+              if (newUsersPayload.length > 0) {
+                  // Insert vào Supabase
+                  const { data: insertedData, error } = await supabase.from('users').insert(newUsersPayload).select();
+                  
+                  if (error) throw error;
+
+                  if (insertedData) {
+                      // Map lại dữ liệu để cập nhật State
+                      const mappedUsers: User[] = insertedData.map((u: any) => ({
+                          id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email,
+                          username: u.username, password: u.password, title: u.title, unitId: u.unit_id,
+                          isFirstLogin: u.is_first_login, canManageUsers: u.can_manage
+                      }));
+                      setUsers([...users, ...mappedUsers]);
+                      alert(`Đã thêm thành công ${insertedData.length} nhân sự!`);
+                      setIsImportModalOpen(false);
+                  }
+              }
+
+          } catch (err: any) {
+              alert("Lỗi nhập file: " + err.message);
+          } finally {
+              setIsProcessing(false);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+          }
+      };
+      reader.readAsBinaryString(file);
+  };
+
+  // --- LOGIC LƯU VÀO DB (GIỮ NGUYÊN) ---
   const handleSave = async () => {
     if (activeTab === 'users' && !editingItem) {
         if (!formData.username || !formData.password) {
@@ -86,7 +185,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             const unitName = formData.name || 'Đơn vị mới';
             const unitLevel = parent ? parent.level + 1 : 0;
             
-            // 1. Chuẩn bị dữ liệu DB (snake_case)
             const dbUnit = {
                 code: unitCode,
                 name: unitName,
@@ -96,20 +194,14 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 manager_ids: formData.managerIds || []
             };
 
-            let savedUnit: Unit | null = null;
-
             if (editingItem) {
-                // UPDATE
                 const { error } = await supabase.from('units').update(dbUnit).eq('id', editingItem.id);
                 if (error) throw error;
-                // Update Local State
                 const newUnit = { ...editingItem, ...formData, code: unitCode, level: unitLevel };
                 setUnits(units.map(u => u.id === editingItem.id ? newUnit : u));
             } else {
-                // INSERT
                 const { data, error } = await supabase.from('units').insert([dbUnit]).select();
                 if (error) throw error;
-                // Add to Local State (Mapping back)
                 if (data && data[0]) {
                     const u = data[0];
                     const newUnit: Unit = { 
@@ -121,11 +213,10 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             }
 
         } else {
-            // USERS
             const dbUser = {
                 hrm_code: formData.hrmCode,
                 full_name: formData.fullName,
-                email: formData.email, // NEW: Thêm email vào DB
+                email: formData.email, 
                 title: formData.title || Role.STAFF,
                 unit_id: formData.unitId || visibleUnits[0]?.id,
                 username: formData.username,
@@ -134,21 +225,14 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             };
 
             if (editingItem) {
-                // Update User
-                // Xóa username khỏi object update để không cho sửa username
                 const { username, ...updatePayload } = dbUser; 
                 const { error } = await supabase.from('users').update(updatePayload).eq('id', editingItem.id);
                 if (error) throw error;
-                
-                // Update Local State
                 const updatedUser = { ...editingItem, ...formData };
                 setUsers(users.map(u => u.id === editingItem.id ? updatedUser : u));
-
             } else {
-                // Insert User
                 const { data, error } = await supabase.from('users').insert([dbUser]).select();
                 if (error) throw error;
-
                 if (data && data[0]) {
                     const u = data[0];
                     const newUser: User = {
@@ -281,6 +365,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
              Danh sách {activeTab === 'units' ? 'Đơn vị (Sơ đồ cây)' : 'Nhân sự'}
            </h3>
            <div className="flex gap-2">
+                {activeTab === 'users' && (
+                    <button onClick={() => setIsImportModalOpen(true)} className="bg-white border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
+                        <FileUp size={16} /> Import Excel
+                    </button>
+                )}
                 <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
                     <Plus size={16} /> Thêm mới
                 </button>
@@ -328,6 +417,42 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             )}
         </div>
       </div>
+
+      {/* Import Modal */}
+      {isImportModalOpen && (
+          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-fade-in">
+                  <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-green-50">
+                      <h3 className="font-bold text-lg text-green-800 flex items-center gap-2"><FileSpreadsheet size={20}/> Import Nhân sự từ Excel</h3>
+                      <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      <div className="text-center p-6 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50">
+                          <FileUp size={48} className="mx-auto text-slate-400 mb-2"/>
+                          <p className="text-slate-600 font-medium mb-1">Kéo thả hoặc chọn file Excel</p>
+                          <p className="text-xs text-slate-400 mb-4">Hỗ trợ định dạng .xlsx, .xls</p>
+                          <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
+                          <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700">Chọn File</button>
+                      </div>
+
+                      <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800">
+                          <p className="font-bold mb-1 flex items-center gap-2"><ShieldCheck size={16}/> Lưu ý quan trọng:</p>
+                          <ul className="list-disc pl-5 space-y-1">
+                              <li>Sử dụng đúng <strong>File mẫu chuẩn</strong> để tránh lỗi.</li>
+                              <li>Cột <strong>UNIT_CODE</strong> phải khớp với Mã đơn vị đã khai báo.</li>
+                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong>.</li>
+                          </ul>
+                      </div>
+                  </div>
+                  <div className="p-4 border-t bg-slate-50 flex justify-between items-center">
+                      <button onClick={handleDownloadTemplate} className="text-blue-600 font-bold text-sm hover:underline flex items-center gap-2">
+                          <Download size={16}/> Tải file mẫu chuẩn
+                      </button>
+                      <button onClick={() => setIsImportModalOpen(false)} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-200">Đóng</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* Add/Edit Modal */}
       {isModalOpen && (

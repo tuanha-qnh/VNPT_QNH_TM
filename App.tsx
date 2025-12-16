@@ -114,41 +114,35 @@ const App: React.FC = () => {
             return;
         }
 
-        // 2. TÌM KIẾM ĐƠN VỊ GỐC (Logic sửa lỗi Foreign Key)
+        // 2. TÌM HOẶC TẠO UNIT 'VNPT_QN' (Step-by-step để tránh lỗi FK)
         let unitId = null;
-
-        // a) Thử tìm đích danh 'VNPT_QN'
-        const { data: rootUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN');
-        if (rootUnits && rootUnits.length > 0) {
-            unitId = rootUnits[0].id;
-            console.log("Đã tìm thấy Unit gốc VNPT_QN:", unitId);
-        }
-
-        // b) Nếu không thấy, thử tìm bất kỳ unit nào có level=0 (hoặc bất kỳ unit nào)
-        if (!unitId) {
-             console.log("Không thấy VNPT_QN, tìm unit bất kỳ...");
-             const { data: anyUnit } = await supabase.from('units').select('id').limit(1);
-             if (anyUnit && anyUnit.length > 0) unitId = anyUnit[0].id;
-        }
-
-        // c) Nếu bảng Units hoàn toàn rỗng, tạo mới
-        if (!unitId) {
-            console.log("Bảng Units rỗng, tạo mới...");
-            const { data: newUnit, error: uErr } = await supabase.from('units').insert([{
-                code: 'VNPT_QN',
-                name: 'VNPT Quảng Ninh (Gốc)',
-                level: 0
-            }]).select();
-            
-            if (uErr) throw new Error("Lỗi tạo đơn vị gốc: " + uErr.message);
-            if (newUnit && newUnit[0]) unitId = newUnit[0].id;
-        }
-
-        if (!unitId) throw new Error("Không thể xác định Unit ID hợp lệ. Vui lòng kiểm tra bảng 'units'.");
-
-        // 3. TẠO HOẶC CẬP NHẬT USER ADMIN
-        const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').single();
         
+        // Bước 2a: Tìm kiếm
+        const { data: existingUnits } = await supabase.from('units').select('id').eq('code', 'VNPT_QN').limit(1);
+        
+        if (existingUnits && existingUnits.length > 0) {
+            unitId = existingUnits[0].id;
+        } else {
+            // Bước 2b: Nếu không có, Tạo mới
+            console.log("Creating root unit...");
+            const { data: newUnit, error: createUnitErr } = await supabase
+                .from('units')
+                .insert([{
+                    code: 'VNPT_QN',
+                    name: 'VNPT Quảng Ninh (Gốc)',
+                    level: 0
+                }])
+                .select(); // Quan trọng: Phải có .select() để trả về ID
+
+            if (createUnitErr) throw new Error("Lỗi tạo Unit: " + createUnitErr.message);
+            if (!newUnit || newUnit.length === 0) throw new Error("Không lấy được ID Unit sau khi tạo.");
+            
+            unitId = newUnit[0].id;
+        }
+
+        if (!unitId) throw new Error("Lỗi nghiêm trọng: Không xác định được Unit ID.");
+
+        // 3. TẠO USER ADMIN (Khi đã chắc chắn có unitId)
         const adminData = {
             hrm_code: 'ADMIN',
             full_name: 'Quản Trị Viên (System)',
@@ -156,17 +150,20 @@ const App: React.FC = () => {
             username: 'admin',
             password: '123',
             title: 'Giám đốc',
-            unit_id: unitId, // Sử dụng ID đã tìm được ở bước 2
+            unit_id: unitId, // ID NÀY ĐÃ CHẮC CHẮN TỒN TẠI
             is_first_login: false,
             can_manage: true
         };
 
+        // Kiểm tra admin cũ có tồn tại không để Update hoặc Insert
+        const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').maybeSingle();
+
         if (existingUser) {
-            const { error: err } = await supabase.from('users').update(adminData).eq('id', existingUser.id);
-            if (err) throw err;
+            const { error: upErr } = await supabase.from('users').update(adminData).eq('id', existingUser.id);
+            if (upErr) throw upErr;
         } else {
-            const { error: err } = await supabase.from('users').insert([adminData]);
-            if (err) throw err;
+            const { error: inErr } = await supabase.from('users').insert([adminData]);
+            if (inErr) throw inErr;
         }
 
         alert("Khởi tạo thành công! \n\nBạn có thể đăng nhập ngay với:\nTài khoản: admin \nMật khẩu: 123");
@@ -177,7 +174,7 @@ const App: React.FC = () => {
         if (isTableMissingError(err.message)) {
              setShowSetupModal(true);
         } else {
-             alert("Lỗi Khởi tạo: " + err.message);
+             alert("Lỗi Khởi tạo: " + err.message + "\n\nVui lòng thử chạy lại script SQL 'Reset' trong cửa sổ Supabase.");
         }
     } finally {
         setIsLoading(false);
