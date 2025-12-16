@@ -1,13 +1,20 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Unit, KPIData, KPI_KEYS, KPIKey } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw } from 'lucide-react';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Settings, Link, Check, Database, ArrowRightLeft, ExternalLink } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { loadData, saveData } from '../utils/mockData';
 
 interface KPIProps {
   users: User[];
   units: Unit[];
+}
+
+interface DataSourceConfig {
+    url: string;
+    lastSync: string;
+    mapping: { [key: string]: string }; // System Field -> Sheet Header Name
 }
 
 // Generate random KPI data for demo fallback
@@ -29,7 +36,7 @@ const generateKPI = (users: User[]): KPIData[] => {
 };
 
 const KPI: React.FC<KPIProps> = ({ users, units }) => {
-  const [activeTab, setActiveTab] = useState<'plan' | 'eval'>('eval'); // Default to evaluation view
+  const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config'>('eval'); 
   const [filterUnit, setFilterUnit] = useState<string>('all');
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
   const [pasteModalOpen, setPasteModalOpen] = useState(false);
@@ -39,27 +46,119 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
   const [kpiData, setKpiData] = useState<KPIData[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // State for Google Sheet Config
+  const [dsConfig, setDsConfig] = useState<DataSourceConfig>({ url: '', lastSync: '', mapping: {} });
+  const [sheetHeaders, setSheetHeaders] = useState<string[]>([]);
+  const [isCheckingLink, setIsCheckingLink] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Define System Fields needing mapping
+  const systemFields = [
+      { key: 'HRM_CODE', label: 'Mã nhân viên (HRM)', required: true },
+      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k}_TARGET`, label: `[${k.toUpperCase()}] Chỉ tiêu`, required: false })),
+      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k}_ACTUAL`, label: `[${k.toUpperCase()}] Thực hiện`, required: false })),
+  ];
+
   // Initialize data
   useEffect(() => {
     const savedData = loadData<KPIData[]>('kpi_data', []);
     if (savedData.length > 0) {
         setKpiData(savedData);
     } else {
-        // Fallback to random data if nothing saved
         const initial = generateKPI(users);
         setKpiData(initial);
         saveData('kpi_data', initial);
     }
+
+    const savedConfig = loadData<DataSourceConfig>('kpi_config', { url: '', lastSync: '', mapping: {} });
+    setDsConfig(savedConfig);
   }, [users]);
 
   // Save whenever data changes
   useEffect(() => {
-      if (kpiData.length > 0) {
-          saveData('kpi_data', kpiData);
-      }
+      if (kpiData.length > 0) saveData('kpi_data', kpiData);
   }, [kpiData]);
 
-  // Filtering Logic
+  useEffect(() => {
+      saveData('kpi_config', dsConfig);
+  }, [dsConfig]);
+
+
+  // --- GOOGLE SHEET LOGIC ---
+
+  const fetchCSV = async (url: string): Promise<any[]> => {
+      try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error("Network response was not ok");
+          const csvText = await response.text();
+          const wb = XLSX.read(csvText, { type: 'string' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          return XLSX.utils.sheet_to_json(ws);
+      } catch (error) {
+          console.error(error);
+          throw error;
+      }
+  };
+
+  const checkConnection = async () => {
+      if (!dsConfig.url) return alert("Vui lòng nhập đường dẫn CSV Google Sheet");
+      setIsCheckingLink(true);
+      try {
+          const data = await fetchCSV(dsConfig.url);
+          if (data.length > 0) {
+              const headers = Object.keys(data[0]);
+              setSheetHeaders(headers);
+              alert(`Kết nối thành công! Tìm thấy ${headers.length} cột dữ liệu.`);
+          } else {
+              alert("Kết nối thành công nhưng file không có dữ liệu.");
+          }
+      } catch (e) {
+          alert("Không thể đọc file. Vui lòng kiểm tra lại đường dẫn (Phải là link 'Publish to web' định dạng CSV).");
+      } finally {
+          setIsCheckingLink(false);
+      }
+  };
+
+  const handleSyncData = async () => {
+      if (!dsConfig.url) return alert("Chưa cấu hình đường dẫn dữ liệu.");
+      setIsSyncing(true);
+      try {
+          const rawData = await fetchCSV(dsConfig.url);
+          
+          // Transform Data using Mapping
+          const transformedData = rawData.map((row: any) => {
+              const newRow: any = {};
+              // Reverse look up from mapping: SystemKey -> SheetHeader
+              Object.entries(dsConfig.mapping).forEach(([sysKey, sheetHeader]) => {
+                  if (sheetHeader && row[sheetHeader] !== undefined) {
+                      newRow[sysKey] = row[sheetHeader];
+                  }
+              });
+              return newRow;
+          });
+
+          // Reuse the process logic
+          processImportData(transformedData, false); // False to suppress alert
+          
+          setDsConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
+          alert("Đồng bộ dữ liệu thành công!");
+          setActiveTab('eval');
+      } catch (e) {
+          alert("Lỗi khi đồng bộ dữ liệu. Vui lòng kiểm tra kết nối.");
+      } finally {
+          setIsSyncing(false);
+      }
+  };
+
+  const updateMapping = (sysKey: string, sheetHeader: string) => {
+      setDsConfig(prev => ({
+          ...prev,
+          mapping: { ...prev.mapping, [sysKey]: sheetHeader }
+      }));
+  };
+
+  // --- EXISTING LOGIC ---
+
   const filteredData = kpiData.filter(item => {
       if (filterUnit !== 'all') {
           const unit = units.find(u => u.id === item.unitId);
@@ -68,139 +167,106 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
       return true;
   });
 
-  // Calculate stats for charts
-  const chartData = filteredData.map(item => {
+  const top5 = filteredData.map(item => {
       const t = item.targets[filterKey] || { target: 0, actual: 0 };
       const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
-      return {
-          name: item.fullName,
-          percent: Math.round(percent),
-          actual: t.actual,
-          target: t.target
-      };
-  }).sort((a, b) => b.percent - a.percent);
+      return { ...item, percent: Math.round(percent), actual: t.actual, target: t.target };
+  }).sort((a, b) => b.percent - a.percent).slice(0, 5);
 
-  const top5 = chartData.slice(0, 5);
-  const bottom5 = [...chartData].sort((a, b) => a.percent - b.percent).slice(0, 5);
-
-  // --- EXCEL HANDLING ---
+  const bottom5 = filteredData.map(item => {
+      const t = item.targets[filterKey] || { target: 0, actual: 0 };
+      const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
+      return { ...item, percent: Math.round(percent), actual: t.actual, target: t.target };
+  }).sort((a, b) => a.percent - b.percent).slice(0, 5);
 
   const handleDownloadTemplate = () => {
-    // Create header row
     const headers = ['HRM_CODE', 'HO_TEN', ...Object.keys(KPI_KEYS).map(k => `${k}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k}_ACTUAL`)];
-    
-    // Create sample rows from current users
     const data = users.map(u => {
         const row: any = { HRM_CODE: u.hrmCode, HO_TEN: u.fullName };
-        Object.keys(KPI_KEYS).forEach(k => {
-            row[`${k}_TARGET`] = 0;
-            row[`${k}_ACTUAL`] = 0;
-        });
+        Object.keys(KPI_KEYS).forEach(k => { row[`${k}_TARGET`] = 0; row[`${k}_ACTUAL`] = 0; });
         return row;
     });
-
     const ws = XLSX.utils.json_to_sheet(data, { header: headers });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "KPI_Template");
     XLSX.writeFile(wb, "VNPT_KPI_Template.xlsx");
   };
 
-  const processImportData = (jsonData: any[]) => {
+  const processImportData = (jsonData: any[], showAlert = true) => {
       if (!jsonData || jsonData.length === 0) return;
-
       const newKpiData = [...kpiData];
       let matchCount = 0;
 
       jsonData.forEach((row: any) => {
-          // Normalize keys to uppercase for simpler matching
           const normalizedRow: any = {};
+          // Normalize input keys to uppercase to match System Keys
           Object.keys(row).forEach(k => normalizedRow[k.toUpperCase()] = row[k]);
+          // Also try direct mapping if mapped keys are used
+          Object.keys(row).forEach(k => normalizedRow[k] = row[k]);
 
-          const hrmCode = normalizedRow['HRM_CODE'];
+          // Priority: Mapped HRM_CODE -> Normalized HRM_CODE -> row HRM_CODE
+          const hrmCode = normalizedRow['HRM_CODE']; 
           if (!hrmCode) return;
 
-          // Find existing user KPI record or create temp structure
           const userIndex = newKpiData.findIndex(k => k.hrmCode === String(hrmCode));
           const user = users.find(u => u.hrmCode === String(hrmCode));
           
           if (user) {
               matchCount++;
               const targets: any = userIndex >= 0 ? { ...newKpiData[userIndex].targets } : {};
-              
               Object.keys(KPI_KEYS).forEach(key => {
-                  const targetKey = `${key.toUpperCase()}_TARGET`;
-                  const actualKey = `${key.toUpperCase()}_ACTUAL`;
+                  const targetKey = `${key}_TARGET`.toUpperCase();
+                  const actualKey = `${key}_ACTUAL`.toUpperCase();
                   
-                  // Only update if column exists in excel
-                  if (targetKey in normalizedRow) {
-                      if (!targets[key]) targets[key] = { target: 0, actual: 0 };
-                      targets[key].target = Number(normalizedRow[targetKey]) || 0;
+                  // Logic: Try to find data using exact keys provided in jsonData
+                  // (which might have been mapped from handleSyncData)
+                  if (normalizedRow[targetKey] !== undefined) {
+                       if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                       targets[key].target = Number(normalizedRow[targetKey]) || 0;
                   }
-                  if (actualKey in normalizedRow) {
-                      if (!targets[key]) targets[key] = { target: 0, actual: 0 };
-                      targets[key].actual = Number(normalizedRow[actualKey]) || 0;
+                  if (normalizedRow[actualKey] !== undefined) {
+                       if (!targets[key]) targets[key] = { target: 0, actual: 0 };
+                       targets[key].actual = Number(normalizedRow[actualKey]) || 0;
                   }
               });
-
-              const record: KPIData = {
-                  hrmCode: user.hrmCode,
-                  fullName: user.fullName,
-                  unitId: user.unitId,
-                  targets: targets
-              };
-
-              if (userIndex >= 0) {
-                  newKpiData[userIndex] = record;
-              } else {
-                  newKpiData.push(record);
-              }
+              const record: KPIData = { hrmCode: user.hrmCode, fullName: user.fullName, unitId: user.unitId, targets: targets };
+              if (userIndex >= 0) newKpiData[userIndex] = record;
+              else newKpiData.push(record);
           }
       });
-
       setKpiData(newKpiData);
-      alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} nhân sự.`);
-      setActiveTab('eval'); // Switch to view results
+      if (showAlert) {
+          alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} nhân sự.`);
+          setActiveTab('eval');
+      }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
       const reader = new FileReader();
       reader.onload = (evt) => {
           const bstr = evt.target?.result;
           const wb = XLSX.read(bstr, { type: 'binary' });
-          const wsname = wb.SheetNames[0];
-          const ws = wb.Sheets[wsname];
+          const ws = wb.Sheets[wb.SheetNames[0]];
           const data = XLSX.utils.sheet_to_json(ws);
           processImportData(data);
       };
       reader.readAsBinaryString(file);
-      // Reset input
       if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handlePasteData = () => {
-     // Parse tab-separated values (Excel/Google Sheets copy format)
      const rows = pasteContent.trim().split('\n');
-     if (rows.length < 2) {
-         alert("Dữ liệu không hợp lệ. Vui lòng bao gồm cả dòng tiêu đề.");
-         return;
-     }
-
+     if (rows.length < 2) return alert("Dữ liệu không hợp lệ.");
      const headers = rows[0].split('\t').map(h => h.trim());
      const result = [];
-     
      for (let i = 1; i < rows.length; i++) {
          const obj: any = {};
          const currentline = rows[i].split('\t');
-         
-         headers.forEach((header, index) => {
-             obj[header] = currentline[index]?.trim();
-         });
+         headers.forEach((header, index) => obj[header] = currentline[index]?.trim());
          result.push(obj);
      }
-     
      processImportData(result);
      setPasteModalOpen(false);
      setPasteContent('');
@@ -214,17 +280,118 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
             <p className="text-sm text-slate-500">Giao kế hoạch và đánh giá BSC/KPI nhân viên</p>
           </div>
           <div className="flex bg-slate-200 p-1 rounded-lg">
-            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Import)</button>
-            <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá & Báo cáo</button>
+            <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá</button>
+            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Excel)</button>
+            <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Cấu hình (Google Sheet)</button>
           </div>
        </div>
+
+       {/* --- CONFIG TAB --- */}
+       {activeTab === 'config' && (
+           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+               <div className="p-6 border-b border-slate-100">
+                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4"><Database className="text-blue-600"/> Liên kết Google Sheet</h3>
+                   
+                   <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6 text-sm text-blue-800">
+                       <p className="font-bold mb-2">Hướng dẫn tạo link:</p>
+                       <ol className="list-decimal pl-5 space-y-1">
+                           <li>Mở file Google Sheet chứa dữ liệu KPI.</li>
+                           <li>Chọn <strong>File (Tệp)</strong> &gt; <strong>Share (Chia sẻ)</strong> &gt; <strong>Publish to web (Công bố lên web)</strong>.</li>
+                           <li>Trong hộp thoại, chọn Sheet cần lấy và chọn định dạng <strong>Comma-separated values (.csv)</strong>.</li>
+                           <li>Nhấn Publish và copy đường link sinh ra dán vào bên dưới.</li>
+                       </ol>
+                   </div>
+
+                   <div className="flex gap-4 items-end mb-4">
+                       <div className="flex-1">
+                           <label className="block text-sm font-bold text-slate-700 mb-1">Đường dẫn CSV (Publish to web)</label>
+                           <div className="flex gap-2">
+                               <div className="relative flex-1">
+                                   <Link className="absolute left-3 top-3 text-slate-400" size={18} />
+                                   <input 
+                                       type="text" 
+                                       className="w-full pl-10 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+                                       placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"
+                                       value={dsConfig.url}
+                                       onChange={e => setDsConfig({...dsConfig, url: e.target.value})}
+                                   />
+                               </div>
+                               <button 
+                                   onClick={checkConnection}
+                                   disabled={isCheckingLink}
+                                   className="px-4 py-2 bg-slate-800 text-white rounded-lg font-bold hover:bg-slate-900 flex items-center gap-2 whitespace-nowrap"
+                               >
+                                   {isCheckingLink ? <RefreshCw className="animate-spin" size={18}/> : <Check size={18}/>}
+                                   Kiểm tra kết nối
+                               </button>
+                           </div>
+                       </div>
+                   </div>
+
+                   {dsConfig.lastSync && (
+                       <div className="text-xs text-slate-500 italic mb-4">
+                           Đồng bộ lần cuối: {dsConfig.lastSync}
+                       </div>
+                   )}
+               </div>
+
+               {/* MAPPING SECTION */}
+               <div className="p-6 bg-slate-50">
+                   <div className="flex justify-between items-center mb-4">
+                       <h4 className="font-bold text-slate-700 flex items-center gap-2"><ArrowRightLeft size={18} /> Ánh xạ dữ liệu (Mapping)</h4>
+                       {sheetHeaders.length > 0 && (
+                           <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-bold">Đã tìm thấy {sheetHeaders.length} cột từ Google Sheet</span>
+                       )}
+                   </div>
+                   
+                   {sheetHeaders.length === 0 ? (
+                       <div className="text-center py-8 text-slate-400 border-2 border-dashed rounded-lg">
+                           Vui lòng nhập Link và nhấn "Kiểm tra kết nối" để tải danh sách cột.
+                       </div>
+                   ) : (
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                           {systemFields.map((field) => (
+                               <div key={field.key} className="flex items-center gap-4 bg-white p-3 rounded border border-slate-200">
+                                   <div className="w-1/2">
+                                       <div className="text-sm font-bold text-slate-700">{field.label}</div>
+                                       <div className="text-xs text-slate-400 font-mono">{field.key}</div>
+                                   </div>
+                                   <div className="text-slate-400"><ArrowRightLeft size={16}/></div>
+                                   <div className="w-1/2">
+                                       <select 
+                                           className="w-full border rounded p-2 text-sm outline-none focus:border-blue-500"
+                                           value={dsConfig.mapping[field.key] || ''}
+                                           onChange={(e) => updateMapping(field.key, e.target.value)}
+                                       >
+                                           <option value="">-- Chọn cột --</option>
+                                           {sheetHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                       </select>
+                                   </div>
+                               </div>
+                           ))}
+                       </div>
+                   )}
+               </div>
+               
+               <div className="p-4 border-t bg-white flex justify-end">
+                   <button 
+                       onClick={handleSyncData}
+                       disabled={isSyncing || sheetHeaders.length === 0}
+                       className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                   >
+                       {isSyncing ? <RefreshCw className="animate-spin" size={20}/> : <RefreshCw size={20}/>}
+                       Lưu cấu hình & Đồng bộ ngay
+                   </button>
+               </div>
+           </div>
+       )}
 
        {activeTab === 'plan' && (
          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
              {/* Left: Actions */}
              <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center flex flex-col items-center justify-center min-h-[400px]">
                   <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4"><FileUp size={32} /></div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập dữ liệu KPI</h3>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập dữ liệu KPI (Excel)</h3>
                   <p className="text-slate-500 mb-6 max-w-sm">Hỗ trợ file Excel (.xlsx) hoặc copy trực tiếp từ Google Sheet. Yêu cầu trường khóa là <strong>HRM_CODE</strong>.</p>
                   
                   <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -299,7 +466,7 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
                     </select>
                </div>
                <div className="text-sm text-slate-500 italic">
-                   Dữ liệu được lưu tự động
+                   {dsConfig.lastSync ? `Đồng bộ Google Sheet: ${dsConfig.lastSync}` : 'Dữ liệu được lưu tự động'}
                </div>
             </div>
 
@@ -312,7 +479,7 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
                      <BarChart data={top5} layout="vertical" margin={{left: 40}}>
                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                        <XAxis type="number" hide />
-                       <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} />
+                       <YAxis dataKey="fullName" type="category" width={100} tick={{fontSize: 11}} />
                        <Tooltip cursor={{fill: '#f0fdf4'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
                        <Bar dataKey="percent" fill="#22c55e" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                      </BarChart>
@@ -327,7 +494,7 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
                       <BarChart data={bottom5} layout="vertical" margin={{left: 40}}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" hide />
-                        <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} />
+                        <YAxis dataKey="fullName" type="category" width={100} tick={{fontSize: 11}} />
                         <Tooltip cursor={{fill: '#fef2f2'}} formatter={(value: number) => [`${value}%`, 'Hoàn thành']} />
                         <Bar dataKey="percent" fill="#ef4444" barSize={20} radius={[0, 4, 4, 0]} label={{ position: 'right', fill: '#666', fontSize: 10, formatter: (val: number) => `${val}%` }} />
                       </BarChart>
