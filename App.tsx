@@ -8,7 +8,8 @@ import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import { supabase } from './utils/supabaseClient'; 
 import { Task, Unit, User, Role } from './types';
-import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle } from 'lucide-react';
+import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; // Import Script
+import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check } from 'lucide-react';
 
 const App: React.FC = () => {
   // Authentication State
@@ -20,6 +21,10 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true); 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
+
+  // Setup State
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // App State
   const [activeModule, setActiveModule] = useState('dashboard');
@@ -36,8 +41,11 @@ const App: React.FC = () => {
           // 1. Lấy Units
           const { data: unitsData, error: uErr } = await supabase.from('units').select('*').order('level', { ascending: true });
           if (uErr) {
+              // Nếu lỗi là do chưa có bảng (Relation undefined), hiển thị modal hướng dẫn
+              if (uErr.message.includes("relation") || uErr.message.includes("does not exist")) {
+                  setShowSetupModal(true);
+              }
               console.error("Lỗi tải Units:", uErr);
-              // Nếu lỗi do chưa có bảng (Relation not exist), không throw để app không crash
           }
 
           const mappedUnits: Unit[] = (unitsData || []).map((u: any) => ({
@@ -47,9 +55,7 @@ const App: React.FC = () => {
           
           // 2. Lấy Users
           const { data: usersData, error: usErr } = await supabase.from('users').select('*');
-          if (usErr) {
-              console.error("Lỗi tải Users:", usErr);
-          }
+          if (usErr) console.error("Lỗi tải Users:", usErr);
 
           const mappedUsers: User[] = (usersData || []).map((u: any) => ({
               id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email, 
@@ -59,9 +65,7 @@ const App: React.FC = () => {
           
           // 3. Lấy Tasks
           const { data: tasksData, error: tErr } = await supabase.from('tasks').select('*');
-          if (tErr) {
-              console.error("Lỗi tải Tasks:", tErr);
-          }
+          if (tErr) console.error("Lỗi tải Tasks:", tErr);
 
           const mappedTasks: Task[] = (tasksData || []).map((t: any) => ({
               id: t.id, name: t.name, content: t.content, status: t.status, priority: t.priority,
@@ -88,12 +92,20 @@ const App: React.FC = () => {
 
   // --- ADMIN RESET / INIT LOGIC ---
   const handleInitializeSystem = async () => {
-    if (!confirm("Hệ thống sẽ tạo Đơn vị gốc và tài khoản Admin mặc định (admin/123). Bạn có chắc chắn?")) return;
+    // Không hỏi confirm ở đây nữa nếu lỗi bảng, nhưng nếu bảng tồn tại mà data trống thì confirm
     
     setIsLoading(true);
     try {
         // 1. Kiểm tra hoặc tạo Đơn vị gốc
-        let { data: existingUnits } = await supabase.from('units').select('id').limit(1);
+        let { data: existingUnits, error: uCheckErr } = await supabase.from('units').select('id').limit(1);
+        
+        // Bắt lỗi tại đây nếu bảng chưa tồn tại
+        if (uCheckErr && (uCheckErr.message.includes("relation") || uCheckErr.message.includes("does not exist"))) {
+            setShowSetupModal(true);
+            setIsLoading(false);
+            return;
+        }
+
         let unitId = existingUnits?.[0]?.id;
 
         if (!unitId) {
@@ -125,7 +137,6 @@ const App: React.FC = () => {
         };
 
         if (existingUser) {
-            // Nếu user đã tồn tại, reset lại password
             const { error: err } = await supabase.from('users').update(adminData).eq('id', existingUser.id);
             if (err) throw err;
         } else {
@@ -134,21 +145,28 @@ const App: React.FC = () => {
         }
 
         alert("Khởi tạo thành công! \nTài khoản: admin \nMật khẩu: 123");
-        
-        // Reload data
         await fetchInitialData();
 
     } catch (err: any) {
         console.error(err);
-        alert("Lỗi Khởi tạo: " + err.message + "\n\nLƯU Ý: Nếu lỗi 'relation does not exist', bạn cần vào Supabase SQL Editor và chạy script tạo bảng (xem file SQL).");
+        if (err.message.includes("relation") || err.message.includes("does not exist")) {
+             setShowSetupModal(true);
+        } else {
+             alert("Lỗi Khởi tạo: " + err.message);
+        }
     } finally {
         setIsLoading(false);
     }
   };
 
+  const handleCopySQL = () => {
+      navigator.clipboard.writeText(SQL_SETUP_SCRIPT);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+  };
+
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
-      // Logic so sánh username/pass từ state đã tải về
       const user = users.find(u => u.username === loginUsername && u.password === loginPassword);
       if (user) {
           setCurrentUser(user);
@@ -217,6 +235,54 @@ const App: React.FC = () => {
     }
   };
 
+  if (showSetupModal) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+              <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl">
+                  <div className="flex items-center gap-3 mb-4 text-orange-600 border-b border-orange-100 pb-4">
+                      <ShieldAlert size={32} />
+                      <div>
+                          <h2 className="text-xl font-bold">Cần cấu hình Database</h2>
+                          <p className="text-sm text-slate-500">Hệ thống chưa tìm thấy các bảng dữ liệu trên Supabase.</p>
+                      </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                      <p className="text-slate-700">Vui lòng thực hiện các bước sau:</p>
+                      <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-600">
+                          <li>Truy cập vào <a href="https://supabase.com/dashboard/project/cxqyxylgwmepnswwhprn/editor" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">Supabase SQL Editor</a>.</li>
+                          <li>Copy toàn bộ đoạn mã SQL bên dưới.</li>
+                          <li>Paste vào cửa sổ Editor trên Supabase và bấm <strong>RUN</strong>.</li>
+                          <li>Sau khi chạy thành công (Success), quay lại đây và tải lại trang.</li>
+                      </ol>
+
+                      <div className="relative group">
+                          <pre className="bg-slate-800 text-slate-200 p-4 rounded-lg text-xs font-mono h-64 overflow-y-auto border border-slate-700">
+                              {SQL_SETUP_SCRIPT}
+                          </pre>
+                          <button 
+                              onClick={handleCopySQL}
+                              className="absolute top-2 right-2 bg-white text-slate-800 px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 hover:bg-blue-50 transition-colors shadow-sm"
+                          >
+                              {copySuccess ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
+                              {copySuccess ? "Đã copy!" : "Copy SQL"}
+                          </button>
+                      </div>
+                      
+                      <div className="flex justify-end pt-4 gap-3">
+                          <button 
+                             onClick={() => window.location.reload()} 
+                             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold flex items-center gap-2"
+                          >
+                              <RotateCcw size={18}/> Đã chạy SQL, Tải lại trang
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )
+  }
+
   if (!currentUser) {
       return (
           <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -265,7 +331,6 @@ const App: React.FC = () => {
                                 </div>
                             </form>
                             
-                            {/* Nút Khởi tạo hiển thị nếu Database trống */}
                             {users.length === 0 && (
                                 <div className="mt-8 pt-6 border-t border-slate-100 text-center animate-pulse">
                                     <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 mb-2">
@@ -282,7 +347,6 @@ const App: React.FC = () => {
                                 </div>
                             )}
 
-                             {/* Nút Debug ẩn (nhỏ) để reset nếu cần */}
                             {users.length > 0 && (
                                 <div className="mt-8 text-center">
                                     <button 
