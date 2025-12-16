@@ -35,14 +35,23 @@ const App: React.FC = () => {
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
+  // Helper function to check if error relates to missing tables
+  const isTableMissingError = (errMsg: string) => {
+      const msg = errMsg.toLowerCase();
+      return msg.includes("relation") || 
+             msg.includes("does not exist") || 
+             msg.includes("could not find the table") ||
+             msg.includes("schema cache");
+  };
+
   const fetchInitialData = async () => {
       setIsLoading(true);
       try {
           // 1. Lấy Units
           const { data: unitsData, error: uErr } = await supabase.from('units').select('*').order('level', { ascending: true });
           if (uErr) {
-              // Nếu lỗi là do chưa có bảng (Relation undefined), hiển thị modal hướng dẫn
-              if (uErr.message.includes("relation") || uErr.message.includes("does not exist")) {
+              // Nếu lỗi là do chưa có bảng, hiển thị modal hướng dẫn
+              if (isTableMissingError(uErr.message)) {
                   setShowSetupModal(true);
               }
               console.error("Lỗi tải Units:", uErr);
@@ -55,7 +64,10 @@ const App: React.FC = () => {
           
           // 2. Lấy Users
           const { data: usersData, error: usErr } = await supabase.from('users').select('*');
-          if (usErr) console.error("Lỗi tải Users:", usErr);
+          if (usErr) {
+               console.error("Lỗi tải Users:", usErr);
+               if (isTableMissingError(usErr.message)) setShowSetupModal(true);
+          }
 
           const mappedUsers: User[] = (usersData || []).map((u: any) => ({
               id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email, 
@@ -65,7 +77,10 @@ const App: React.FC = () => {
           
           // 3. Lấy Tasks
           const { data: tasksData, error: tErr } = await supabase.from('tasks').select('*');
-          if (tErr) console.error("Lỗi tải Tasks:", tErr);
+          if (tErr) {
+              console.error("Lỗi tải Tasks:", tErr);
+              if (isTableMissingError(tErr.message)) setShowSetupModal(true);
+          }
 
           const mappedTasks: Task[] = (tasksData || []).map((t: any) => ({
               id: t.id, name: t.name, content: t.content, status: t.status, priority: t.priority,
@@ -79,7 +94,7 @@ const App: React.FC = () => {
           setUsers(mappedUsers);
           setTasks(mappedTasks);
 
-      } catch (error) {
+      } catch (error: any) {
           console.error("Lỗi kết nối chung:", error);
       } finally {
           setIsLoading(false);
@@ -92,20 +107,19 @@ const App: React.FC = () => {
 
   // --- ADMIN RESET / INIT LOGIC ---
   const handleInitializeSystem = async () => {
-    // Không hỏi confirm ở đây nữa nếu lỗi bảng, nhưng nếu bảng tồn tại mà data trống thì confirm
-    
     setIsLoading(true);
     try {
-        // 1. Kiểm tra hoặc tạo Đơn vị gốc
+        // 1. Kiểm tra bảng tồn tại
         let { data: existingUnits, error: uCheckErr } = await supabase.from('units').select('id').limit(1);
         
         // Bắt lỗi tại đây nếu bảng chưa tồn tại
-        if (uCheckErr && (uCheckErr.message.includes("relation") || uCheckErr.message.includes("does not exist"))) {
+        if (uCheckErr && isTableMissingError(uCheckErr.message)) {
             setShowSetupModal(true);
             setIsLoading(false);
             return;
         }
 
+        // 2. Kiểm tra hoặc tạo Đơn vị gốc
         let unitId = existingUnits?.[0]?.id;
 
         if (!unitId) {
@@ -121,7 +135,7 @@ const App: React.FC = () => {
 
         if (!unitId) throw new Error("Không thể xác định đơn vị gốc.");
 
-        // 2. Kiểm tra hoặc tạo Admin User
+        // 3. Kiểm tra hoặc tạo Admin User
         const { data: existingUser } = await supabase.from('users').select('id').eq('username', 'admin').single();
         
         const adminData = {
@@ -149,7 +163,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
         console.error(err);
-        if (err.message.includes("relation") || err.message.includes("does not exist")) {
+        if (isTableMissingError(err.message)) {
              setShowSetupModal(true);
         } else {
              alert("Lỗi Khởi tạo: " + err.message);
