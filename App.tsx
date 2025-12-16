@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './modules/Dashboard';
@@ -6,7 +7,7 @@ import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import { loadData, saveData, mockTasks, mockUnits, mockUsers } from './utils/mockData';
 import { Task, Unit, User } from './types';
-import { Bell, Search, User as UserIcon, LogOut, Lock, RotateCcw } from 'lucide-react';
+import { Search, User as UserIcon, LogOut, Lock, RotateCcw } from 'lucide-react';
 
 const App: React.FC = () => {
   // Authentication State
@@ -85,7 +86,7 @@ const App: React.FC = () => {
       case 'tasks':
         return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
       case 'kpi':
-        return <KPI users={users} units={units} />;
+        return <KPI users={users} units={units} currentUser={currentUser!} />;
       default:
         return <Dashboard tasks={tasks} />;
     }

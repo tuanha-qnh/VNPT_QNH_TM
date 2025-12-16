@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Unit, KPIData, KPI_KEYS, KPIKey } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Settings, Link, Check, Database, ArrowRightLeft, ExternalLink } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { loadData, saveData } from '../utils/mockData';
 
 interface KPIProps {
   users: User[];
   units: Unit[];
+  currentUser: User;
 }
 
 interface DataSourceConfig {
@@ -35,7 +36,7 @@ const generateKPI = (users: User[]): KPIData[] => {
     });
 };
 
-const KPI: React.FC<KPIProps> = ({ users, units }) => {
+const KPI: React.FC<KPIProps> = ({ users, units, currentUser }) => {
   const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config'>('eval'); 
   const [filterUnit, setFilterUnit] = useState<string>('all');
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
@@ -55,9 +56,11 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
   // Define System Fields needing mapping
   const systemFields = [
       { key: 'HRM_CODE', label: 'Mã nhân viên (HRM)', required: true },
-      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k}_TARGET`, label: `[${k.toUpperCase()}] Chỉ tiêu`, required: false })),
-      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k}_ACTUAL`, label: `[${k.toUpperCase()}] Thực hiện`, required: false })),
+      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k.toUpperCase()}_TARGET`, label: `[${k.toUpperCase()}] Chỉ tiêu`, required: false })),
+      ...Object.keys(KPI_KEYS).map(k => ({ key: `${k.toUpperCase()}_ACTUAL`, label: `[${k.toUpperCase()}] Thực hiện`, required: false })),
   ];
+
+  const isAdmin = currentUser.hrmCode === 'ADMIN';
 
   // Initialize data
   useEffect(() => {
@@ -130,8 +133,9 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
               const newRow: any = {};
               // Reverse look up from mapping: SystemKey -> SheetHeader
               Object.entries(dsConfig.mapping).forEach(([sysKey, sheetHeader]) => {
-                  if (sheetHeader && row[sheetHeader] !== undefined) {
-                      newRow[sysKey] = row[sheetHeader];
+                  const header = sheetHeader as string;
+                  if (header && row[header] !== undefined) {
+                      newRow[sysKey] = row[header];
                   }
               });
               return newRow;
@@ -180,10 +184,10 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
   }).sort((a, b) => a.percent - b.percent).slice(0, 5);
 
   const handleDownloadTemplate = () => {
-    const headers = ['HRM_CODE', 'HO_TEN', ...Object.keys(KPI_KEYS).map(k => `${k}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k}_ACTUAL`)];
+    const headers = ['HRM_CODE', 'HO_TEN', ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_TARGET`), ...Object.keys(KPI_KEYS).map(k => `${k.toUpperCase()}_ACTUAL`)];
     const data = users.map(u => {
         const row: any = { HRM_CODE: u.hrmCode, HO_TEN: u.fullName };
-        Object.keys(KPI_KEYS).forEach(k => { row[`${k}_TARGET`] = 0; row[`${k}_ACTUAL`] = 0; });
+        Object.keys(KPI_KEYS).forEach(k => { row[`${k.toUpperCase()}_TARGET`] = 0; row[`${k.toUpperCase()}_ACTUAL`] = 0; });
         return row;
     });
     const ws = XLSX.utils.json_to_sheet(data, { header: headers });
@@ -201,10 +205,8 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
           const normalizedRow: any = {};
           // Normalize input keys to uppercase to match System Keys
           Object.keys(row).forEach(k => normalizedRow[k.toUpperCase()] = row[k]);
-          // Also try direct mapping if mapped keys are used
-          Object.keys(row).forEach(k => normalizedRow[k] = row[k]);
-
-          // Priority: Mapped HRM_CODE -> Normalized HRM_CODE -> row HRM_CODE
+          
+          // Priority: Mapped HRM_CODE -> Normalized HRM_CODE
           const hrmCode = normalizedRow['HRM_CODE']; 
           if (!hrmCode) return;
 
@@ -215,11 +217,9 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
               matchCount++;
               const targets: any = userIndex >= 0 ? { ...newKpiData[userIndex].targets } : {};
               Object.keys(KPI_KEYS).forEach(key => {
-                  const targetKey = `${key}_TARGET`.toUpperCase();
-                  const actualKey = `${key}_ACTUAL`.toUpperCase();
+                  const targetKey = `${key.toUpperCase()}_TARGET`;
+                  const actualKey = `${key.toUpperCase()}_ACTUAL`;
                   
-                  // Logic: Try to find data using exact keys provided in jsonData
-                  // (which might have been mapped from handleSyncData)
                   if (normalizedRow[targetKey] !== undefined) {
                        if (!targets[key]) targets[key] = { target: 0, actual: 0 };
                        targets[key].target = Number(normalizedRow[targetKey]) || 0;
@@ -282,22 +282,26 @@ const KPI: React.FC<KPIProps> = ({ users, units }) => {
           <div className="flex bg-slate-200 p-1 rounded-lg">
             <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá</button>
             <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Excel)</button>
-            <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Cấu hình (Google Sheet)</button>
+            
+            {/* ONLY ADMIN CAN SEE THIS TAB */}
+            {isAdmin && (
+                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Cấu hình (Google Sheet)</button>
+            )}
           </div>
        </div>
 
-       {/* --- CONFIG TAB --- */}
-       {activeTab === 'config' && (
+       {/* --- CONFIG TAB (ADMIN ONLY) --- */}
+       {activeTab === 'config' && isAdmin && (
            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                <div className="p-6 border-b border-slate-100">
-                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4"><Database className="text-blue-600"/> Liên kết Google Sheet</h3>
+                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4"><Database className="text-blue-600"/> Liên kết Google Sheet (CSV)</h3>
                    
                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6 text-sm text-blue-800">
-                       <p className="font-bold mb-2">Hướng dẫn tạo link:</p>
+                       <p className="font-bold mb-2">Hướng dẫn lấy link (Chỉ hỗ trợ Publish to Web):</p>
                        <ol className="list-decimal pl-5 space-y-1">
                            <li>Mở file Google Sheet chứa dữ liệu KPI.</li>
                            <li>Chọn <strong>File (Tệp)</strong> &gt; <strong>Share (Chia sẻ)</strong> &gt; <strong>Publish to web (Công bố lên web)</strong>.</li>
-                           <li>Trong hộp thoại, chọn Sheet cần lấy và chọn định dạng <strong>Comma-separated values (.csv)</strong>.</li>
+                           <li>Trong hộp thoại: Chọn Sheet cần lấy và chọn định dạng <strong>Comma-separated values (.csv)</strong>.</li>
                            <li>Nhấn Publish và copy đường link sinh ra dán vào bên dưới.</li>
                        </ol>
                    </div>
