@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { Task, TaskStatus, TaskPriority, User, Unit, ExtensionRequest } from '../types';
-import { Calendar, LayoutList, Plus, Search, MoreHorizontal, User as UserIcon, Clock, AlertTriangle, CheckCircle, X } from 'lucide-react';
+import { Calendar, LayoutList, Plus, Search, MoreHorizontal, User as UserIcon, Clock, AlertTriangle, CheckCircle, X, Edit2, Trash2, Save } from 'lucide-react';
 
 interface TasksProps {
   tasks: Task[];
@@ -22,38 +23,52 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
   const [viewMode, setViewMode] = useState<'list' | 'timeline' | 'report'>('list');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isEditingTask, setIsEditingTask] = useState(false);
   
   // Extension State
   const [extensionReason, setExtensionReason] = useState('');
   const [extensionDate, setExtensionDate] = useState('');
 
-  const [newTask, setNewTask] = useState<Partial<Task>>({
+  // Form State (Create & Edit)
+  const [taskForm, setTaskForm] = useState<Partial<Task>>({
     type: 'Single',
     primaryAssigneeIds: [],
     supportAssigneeIds: []
   });
 
+  const resetForm = () => {
+    setTaskForm({ type: 'Single', primaryAssigneeIds: [], supportAssigneeIds: [] });
+    setExtensionReason('');
+    setExtensionDate('');
+    setIsEditingTask(false);
+  };
+
+  const openCreateModal = () => {
+      resetForm();
+      setShowCreateForm(true);
+  };
+
   const handleCreateTask = () => {
-    if (!newTask.name || !newTask.deadline) return alert("Vui lòng nhập tên công việc và hạn hoàn thành");
+    if (!taskForm.name || !taskForm.deadline) return alert("Vui lòng nhập tên công việc và hạn hoàn thành");
 
     const task: Task = {
       id: `t${Date.now()}`,
-      name: newTask.name || 'Công việc mới',
-      content: newTask.content || '',
-      type: newTask.type as any,
+      name: taskForm.name || 'Công việc mới',
+      content: taskForm.content || '',
+      type: taskForm.type as any,
       status: TaskStatus.PENDING,
       priority: TaskPriority.MEDIUM,
       progress: 0,
       createdAt: new Date().toISOString(),
-      deadline: newTask.deadline || new Date().toISOString(),
-      assignerId: currentUser.id, // Fixed: Assigner is current user
-      primaryAssigneeIds: newTask.primaryAssigneeIds || [],
-      supportAssigneeIds: newTask.supportAssigneeIds || [],
-      projectId: newTask.type === 'Project' ? newTask.projectId : undefined
+      deadline: taskForm.deadline || new Date().toISOString(),
+      assignerId: currentUser.id,
+      primaryAssigneeIds: taskForm.primaryAssigneeIds || [],
+      supportAssigneeIds: taskForm.supportAssigneeIds || [],
+      projectId: taskForm.type === 'Project' ? taskForm.projectId : undefined
     };
     setTasks([...tasks, task]);
     setShowCreateForm(false);
-    setNewTask({ type: 'Single', primaryAssigneeIds: [], supportAssigneeIds: [] });
+    resetForm();
   };
 
   const handleUpdateStatus = (taskId: string, status: TaskStatus, progress: number) => {
@@ -96,18 +111,51 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
   };
 
   const handleDeleteTask = (taskId: string) => {
-      if (confirm("Xóa công việc này?")) {
+      if (confirm("Bạn có chắc chắn muốn xóa công việc này không?")) {
           setTasks(tasks.filter(t => t.id !== taskId));
           setSelectedTask(null);
       }
   };
 
+  const handleStartEdit = () => {
+      if (!selectedTask) return;
+      setTaskForm({
+          ...selectedTask
+      });
+      setIsEditingTask(true);
+  };
+
+  const handleSaveEdit = () => {
+      if (!selectedTask || !taskForm.name) return;
+      
+      const updatedTask: Task = {
+          ...selectedTask,
+          name: taskForm.name,
+          content: taskForm.content || '',
+          deadline: taskForm.deadline || selectedTask.deadline,
+          type: taskForm.type as any,
+          projectId: taskForm.projectId,
+          primaryAssigneeIds: taskForm.primaryAssigneeIds || [],
+          supportAssigneeIds: taskForm.supportAssigneeIds || []
+      };
+
+      setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+      setSelectedTask(updatedTask);
+      setIsEditingTask(false);
+  };
+
   // Helper for Multi-Select
   const toggleSelection = (id: string, field: 'primaryAssigneeIds' | 'supportAssigneeIds') => {
-      const current = newTask[field] || [];
+      const current = taskForm[field] || [];
       const updated = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
-      setNewTask({ ...newTask, [field]: updated });
+      setTaskForm({ ...taskForm, [field]: updated });
   };
+
+  // Permission Check
+  // Admin or Assigner (Task Owner) has specific rights
+  const isTaskOwner = selectedTask 
+    ? (currentUser.id === selectedTask.assignerId || currentUser.hrmCode === 'ADMIN') 
+    : false;
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -120,7 +168,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
         <div className="flex gap-2">
            <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-blue-100 text-blue-700' : 'bg-white'}`}><LayoutList size={20}/></button>
            <button onClick={() => setViewMode('timeline')} className={`p-2 rounded-lg ${viewMode === 'timeline' ? 'bg-blue-100 text-blue-700' : 'bg-white'}`}><Calendar size={20}/></button>
-           <button onClick={() => setShowCreateForm(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md ml-2"><Plus size={16} /> Giao việc mới</button>
+           <button onClick={openCreateModal} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md ml-2"><Plus size={16} /> Giao việc mới</button>
         </div>
       </div>
 
@@ -146,7 +194,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                        const primaries = task.primaryAssigneeIds.map(id => users.find(u => u.id === id)?.fullName).join(', ');
                        const supports = task.supportAssigneeIds.map(id => users.find(u => u.id === id)?.fullName).join(', ');
                        return (
-                         <tr key={task.id} className="hover:bg-blue-50/30 cursor-pointer transition-colors" onClick={() => setSelectedTask(task)}>
+                         <tr key={task.id} className="hover:bg-blue-50/30 cursor-pointer transition-colors" onClick={() => { setSelectedTask(task); setIsEditingTask(false); }}>
                             <td className="px-4 py-3 font-medium text-slate-800">
                                 {task.name}
                                 {task.extensionRequest?.status === 'pending' && <span className="ml-2 text-xs bg-orange-100 text-orange-600 px-1 rounded">Xin gia hạn</span>}
@@ -170,8 +218,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
           </div>
         )}
         
-        {/* Basic timeline placeholder (keeping existing logic simplifed) */}
-        {viewMode === 'timeline' && <div className="p-8 text-center text-slate-400">Chế độ Timeline (như cũ)</div>}
+        {viewMode === 'timeline' && <div className="p-8 text-center text-slate-400">Chế độ Timeline (Đang phát triển)</div>}
       </div>
 
       {/* CREATE TASK MODAL */}
@@ -186,19 +233,19 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                 <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                         <label className="block text-sm font-medium mb-1">Tên công việc</label>
-                        <input className="w-full border rounded-lg p-2.5" value={newTask.name || ''} onChange={e => setNewTask({...newTask, name: e.target.value})} />
+                        <input className="w-full border rounded-lg p-2.5" value={taskForm.name || ''} onChange={e => setTaskForm({...taskForm, name: e.target.value})} />
                     </div>
                     <div className="col-span-2">
                         <label className="block text-sm font-medium mb-1">Nội dung</label>
-                        <textarea className="w-full border rounded-lg p-2.5 h-20" value={newTask.content || ''} onChange={e => setNewTask({...newTask, content: e.target.value})} />
+                        <textarea className="w-full border rounded-lg p-2.5 h-20" value={taskForm.content || ''} onChange={e => setTaskForm({...taskForm, content: e.target.value})} />
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Hạn hoàn thành</label>
-                        <input type="date" className="w-full border rounded-lg p-2.5" onChange={e => setNewTask({...newTask, deadline: new Date(e.target.value).toISOString()})} />
+                        <input type="date" className="w-full border rounded-lg p-2.5" onChange={e => setTaskForm({...taskForm, deadline: new Date(e.target.value).toISOString()})} />
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Loại công việc</label>
-                        <select className="w-full border rounded-lg p-2.5" onChange={e => setNewTask({...newTask, type: e.target.value as any})}><option value="Single">Giao việc lẻ</option><option value="Project">Dự án</option></select>
+                        <select className="w-full border rounded-lg p-2.5" onChange={e => setTaskForm({...taskForm, type: e.target.value as any})}><option value="Single">Giao việc lẻ</option><option value="Project">Dự án</option></select>
                     </div>
                     {/* Multi-Select Simulation */}
                     <div className="col-span-2 grid grid-cols-2 gap-4">
@@ -206,7 +253,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                              <div className="text-sm font-bold mb-2 text-blue-700">Người chủ trì</div>
                              {users.map(u => (
                                  <label key={`p-${u.id}`} className="flex items-center gap-2 text-sm py-1 hover:bg-slate-50">
-                                     <input type="checkbox" checked={newTask.primaryAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'primaryAssigneeIds')} />
+                                     <input type="checkbox" checked={taskForm.primaryAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'primaryAssigneeIds')} />
                                      {u.fullName}
                                  </label>
                              ))}
@@ -215,7 +262,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                              <div className="text-sm font-bold mb-2 text-slate-600">Người phối hợp</div>
                              {users.map(u => (
                                  <label key={`s-${u.id}`} className="flex items-center gap-2 text-sm py-1 hover:bg-slate-50">
-                                     <input type="checkbox" checked={newTask.supportAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'supportAssigneeIds')} />
+                                     <input type="checkbox" checked={taskForm.supportAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'supportAssigneeIds')} />
                                      {u.fullName}
                                  </label>
                              ))}
@@ -235,103 +282,190 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden animate-fade-in flex flex-col max-h-[95vh]">
                 <div className="p-4 border-b bg-slate-50 flex justify-between items-start">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-800">{selectedTask.name}</h2>
-                        <div className="text-sm text-slate-500 mt-1 flex gap-4">
-                            <span className="flex items-center gap-1"><UserIcon size={14}/> Người giao: {users.find(u => u.id === selectedTask.assignerId)?.fullName}</span>
-                            <span className="flex items-center gap-1"><Clock size={14}/> Deadline: {new Date(selectedTask.deadline).toLocaleDateString('vi-VN')}</span>
+                    <div className="flex-1 mr-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-xl font-bold text-slate-800">
+                                {isEditingTask ? "Chỉnh sửa công việc" : selectedTask.name}
+                            </h2>
+                            {isTaskOwner && !isEditingTask && (
+                                <div className="flex gap-2">
+                                    <button onClick={handleStartEdit} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg flex items-center gap-2 text-sm font-bold">
+                                        <Edit2 size={16} /> <span className="hidden sm:inline">Sửa</span>
+                                    </button>
+                                    <button onClick={() => handleDeleteTask(selectedTask.id)} className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg flex items-center gap-2 text-sm font-bold">
+                                        <Trash2 size={16} /> <span className="hidden sm:inline">Xóa</span>
+                                    </button>
+                                </div>
+                            )}
                         </div>
+                        {!isEditingTask && (
+                            <div className="text-sm text-slate-500 mt-1 flex gap-4">
+                                <span className="flex items-center gap-1"><UserIcon size={14}/> Người giao: {users.find(u => u.id === selectedTask.assignerId)?.fullName}</span>
+                                <span className="flex items-center gap-1"><Clock size={14}/> Deadline: {new Date(selectedTask.deadline).toLocaleDateString('vi-VN')}</span>
+                            </div>
+                        )}
                     </div>
                     <button onClick={() => setSelectedTask(null)}><X size={24} className="text-slate-400 hover:text-red-500" /></button>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto p-6">
-                    <div className="grid grid-cols-3 gap-6">
-                        <div className="col-span-2 space-y-6">
-                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
-                                <h4 className="font-bold text-sm text-slate-700 mb-2">Nội dung thực hiện</h4>
-                                <p className="text-slate-600 whitespace-pre-wrap">{selectedTask.content}</p>
-                            </div>
-
-                            {/* Staff Action Area */}
-                            <div className="border rounded-lg p-4">
-                                <h4 className="font-bold text-sm text-slate-700 mb-4">Cập nhật tiến độ (Dành cho nhân viên)</h4>
-                                <div className="flex items-center gap-4">
-                                    <select 
-                                        className="border rounded px-3 py-2"
-                                        value={selectedTask.status}
-                                        onChange={(e) => handleUpdateStatus(selectedTask.id, e.target.value as TaskStatus, selectedTask.progress)}
-                                    >
-                                        {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                    <input 
-                                        type="range" min="0" max="100" 
-                                        value={selectedTask.progress}
-                                        onChange={(e) => handleUpdateStatus(selectedTask.id, selectedTask.status, parseInt(e.target.value))}
-                                        className="flex-1"
-                                    />
-                                    <span className="font-bold w-12 text-right">{selectedTask.progress}%</span>
+                    {isEditingTask ? (
+                         // --- EDIT MODE FORM ---
+                         <div className="space-y-4">
+                             <div className="grid grid-cols-2 gap-4">
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium mb-1">Tên công việc</label>
+                                    <input className="w-full border rounded-lg p-2.5" value={taskForm.name || ''} onChange={e => setTaskForm({...taskForm, name: e.target.value})} />
                                 </div>
-                            </div>
-                            
-                            {/* Extension Request Area */}
-                            <div className="border border-orange-200 bg-orange-50 rounded-lg p-4">
-                                <h4 className="font-bold text-sm text-orange-800 mb-2 flex items-center gap-2"><AlertTriangle size={16}/> Gia hạn Deadline</h4>
-                                {selectedTask.extensionRequest?.status === 'pending' ? (
-                                    <div className="text-sm bg-white p-3 rounded border border-orange-200">
-                                        <p><strong>Ngày xin gia hạn:</strong> {new Date(selectedTask.extensionRequest.requestedDate).toLocaleDateString()}</p>
-                                        <p><strong>Lý do:</strong> {selectedTask.extensionRequest.reason}</p>
-                                        <p className="mt-2 italic text-orange-600">Đang chờ phê duyệt...</p>
-                                        
-                                        {/* Approval Actions for Leader */}
-                                        {selectedTask.assignerId === currentUser.id && (
-                                            <div className="mt-3 flex gap-2">
-                                                <button onClick={() => handleApproveExtension(selectedTask.id, true)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold">Đồng ý</button>
-                                                <button onClick={() => handleApproveExtension(selectedTask.id, false)} className="bg-red-500 text-white px-3 py-1 rounded text-xs font-bold">Từ chối</button>
-                                            </div>
-                                        )}
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium mb-1">Nội dung</label>
+                                    <textarea className="w-full border rounded-lg p-2.5 h-32" value={taskForm.content || ''} onChange={e => setTaskForm({...taskForm, content: e.target.value})} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Hạn hoàn thành</label>
+                                    <input 
+                                        type="date" 
+                                        className="w-full border rounded-lg p-2.5" 
+                                        value={taskForm.deadline ? new Date(taskForm.deadline).toISOString().split('T')[0] : ''}
+                                        onChange={e => setTaskForm({...taskForm, deadline: new Date(e.target.value).toISOString()})} 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Loại công việc</label>
+                                    <select className="w-full border rounded-lg p-2.5" value={taskForm.type} onChange={e => setTaskForm({...taskForm, type: e.target.value as any})}><option value="Single">Giao việc lẻ</option><option value="Project">Dự án</option></select>
+                                </div>
+                                {/* Assignee Selection in Edit Mode */}
+                                <div className="col-span-2 grid grid-cols-2 gap-4">
+                                    <div className="border p-3 rounded-lg max-h-40 overflow-y-auto">
+                                        <div className="text-sm font-bold mb-2 text-blue-700">Người chủ trì</div>
+                                        {users.map(u => (
+                                            <label key={`p-${u.id}`} className="flex items-center gap-2 text-sm py-1 hover:bg-slate-50">
+                                                <input type="checkbox" checked={taskForm.primaryAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'primaryAssigneeIds')} />
+                                                {u.fullName}
+                                            </label>
+                                        ))}
                                     </div>
-                                ) : (
-                                    <div className="flex gap-2 items-end">
-                                        <div className="flex-1">
-                                            <label className="text-xs font-bold text-slate-600">Ngày mong muốn</label>
-                                            <input type="date" className="w-full border p-1.5 rounded text-sm bg-white" onChange={e => setExtensionDate(e.target.value)} />
+                                    <div className="border p-3 rounded-lg max-h-40 overflow-y-auto">
+                                        <div className="text-sm font-bold mb-2 text-slate-600">Người phối hợp</div>
+                                        {users.map(u => (
+                                            <label key={`s-${u.id}`} className="flex items-center gap-2 text-sm py-1 hover:bg-slate-50">
+                                                <input type="checkbox" checked={taskForm.supportAssigneeIds?.includes(u.id)} onChange={() => toggleSelection(u.id, 'supportAssigneeIds')} />
+                                                {u.fullName}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                             </div>
+                             <div className="flex justify-end gap-2 pt-4 border-t">
+                                 <button onClick={() => setIsEditingTask(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Hủy</button>
+                                 <button onClick={handleSaveEdit} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold flex items-center gap-2"><Save size={16}/> Lưu thay đổi</button>
+                             </div>
+                         </div>
+                    ) : (
+                         // --- VIEW MODE ---
+                        <div className="grid grid-cols-3 gap-6">
+                            <div className="col-span-2 space-y-6">
+                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+                                    <h4 className="font-bold text-sm text-slate-700 mb-2">Nội dung thực hiện</h4>
+                                    <p className="text-slate-600 whitespace-pre-wrap">{selectedTask.content}</p>
+                                </div>
+
+                                {/* Staff Action Area - HIDDEN FOR OWNER/ADMIN */}
+                                {!isTaskOwner && (
+                                    <div className="border rounded-lg p-4 bg-white shadow-sm">
+                                        <h4 className="font-bold text-sm text-slate-700 mb-4">Cập nhật tiến độ (Dành cho nhân viên)</h4>
+                                        <div className="flex items-center gap-4">
+                                            <select 
+                                                className="border rounded px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                                                value={selectedTask.status}
+                                                onChange={(e) => handleUpdateStatus(selectedTask.id, e.target.value as TaskStatus, selectedTask.progress)}
+                                            >
+                                                {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
+                                            <input 
+                                                type="range" min="0" max="100" 
+                                                value={selectedTask.progress}
+                                                onChange={(e) => handleUpdateStatus(selectedTask.id, selectedTask.status, parseInt(e.target.value))}
+                                                className="flex-1 accent-blue-600"
+                                            />
+                                            <span className="font-bold w-12 text-right">{selectedTask.progress}%</span>
                                         </div>
-                                        <div className="flex-[2]">
-                                            <label className="text-xs font-bold text-slate-600">Lý do</label>
-                                            <input type="text" className="w-full border p-1.5 rounded text-sm bg-white" placeholder="Tại sao cần gia hạn?" onChange={e => setExtensionReason(e.target.value)} />
-                                        </div>
-                                        <button onClick={handleExtensionRequest} className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm font-bold hover:bg-orange-600">Gửi yêu cầu</button>
                                     </div>
                                 )}
+                                
+                                {/* Extension Request Area */}
+                                <div className="border border-orange-200 bg-orange-50 rounded-lg p-4">
+                                    <h4 className="font-bold text-sm text-orange-800 mb-2 flex items-center gap-2"><AlertTriangle size={16}/> Quản lý hạn hoàn thành</h4>
+                                    
+                                    {selectedTask.extensionRequest?.status === 'pending' ? (
+                                        <div className="text-sm bg-white p-3 rounded border border-orange-200 shadow-sm">
+                                            <p className="mb-1"><strong>Ngày xin gia hạn:</strong> {new Date(selectedTask.extensionRequest.requestedDate).toLocaleDateString()}</p>
+                                            <p className="mb-1"><strong>Lý do:</strong> {selectedTask.extensionRequest.reason}</p>
+                                            <p className="mt-2 text-orange-600 font-medium italic">Trạng thái: Đang chờ phê duyệt</p>
+                                            
+                                            {/* Approval Actions for Leader */}
+                                            {isTaskOwner && (
+                                                <div className="mt-3 flex gap-2 pt-2 border-t border-orange-100">
+                                                    <button onClick={() => handleApproveExtension(selectedTask.id, true)} className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-green-700">Đồng ý</button>
+                                                    <button onClick={() => handleApproveExtension(selectedTask.id, false)} className="bg-red-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-red-600">Từ chối</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        // Request Form - ONLY FOR ASSIGNEE (NOT OWNER)
+                                        !isTaskOwner ? (
+                                            <div className="flex flex-col sm:flex-row gap-2 items-end">
+                                                <div className="flex-1 w-full">
+                                                    <label className="text-xs font-bold text-slate-600 block mb-1">Ngày mong muốn</label>
+                                                    <input type="date" className="w-full border p-2 rounded text-sm bg-white" onChange={e => setExtensionDate(e.target.value)} />
+                                                </div>
+                                                <div className="flex-[2] w-full">
+                                                    <label className="text-xs font-bold text-slate-600 block mb-1">Lý do gia hạn</label>
+                                                    <input type="text" className="w-full border p-2 rounded text-sm bg-white" placeholder="Nhập lý do..." onChange={e => setExtensionReason(e.target.value)} />
+                                                </div>
+                                                <button onClick={handleExtensionRequest} className="bg-orange-500 text-white px-3 py-2 rounded text-sm font-bold hover:bg-orange-600 w-full sm:w-auto">Gửi</button>
+                                            </div>
+                                        ) : (
+                                            <div className="text-sm text-slate-500 italic">Không có yêu cầu gia hạn nào.</div>
+                                        )
+                                    )}
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Sidebar Info */}
-                        <div className="space-y-4">
-                            <div className="border p-4 rounded-lg">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người chủ trì</h4>
-                                <div className="space-y-2">
-                                    {selectedTask.primaryAssigneeIds.map(id => {
-                                        const u = users.find(x => x.id === id);
-                                        return <div key={id} className="flex items-center gap-2 text-sm font-medium"><div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-xs text-blue-600">{u?.fullName[0]}</div> {u?.fullName}</div>
-                                    })}
+                            {/* Sidebar Info */}
+                            <div className="space-y-4">
+                                <div className="border p-4 rounded-lg bg-slate-50">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Trạng thái hiện tại</h4>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className={`px-3 py-1 rounded-full text-xs font-bold border ${statusColors[selectedTask.status]}`}>{selectedTask.status}</span>
+                                    </div>
+                                    <div className="w-full bg-slate-200 rounded-full h-2.5 mb-1">
+                                        <div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${selectedTask.progress}%`}}></div>
+                                    </div>
+                                    <div className="text-right text-xs font-bold text-blue-700">{selectedTask.progress}%</div>
+                                </div>
+
+                                <div className="border p-4 rounded-lg">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người chủ trì</h4>
+                                    <div className="space-y-2">
+                                        {selectedTask.primaryAssigneeIds.map(id => {
+                                            const u = users.find(x => x.id === id);
+                                            return <div key={id} className="flex items-center gap-2 text-sm font-medium"><div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-xs text-blue-600">{u?.fullName[0]}</div> {u?.fullName}</div>
+                                        })}
+                                    </div>
+                                </div>
+                                <div className="border p-4 rounded-lg">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người phối hợp</h4>
+                                    <div className="space-y-2">
+                                        {selectedTask.supportAssigneeIds.map(id => {
+                                            const u = users.find(x => x.id === id);
+                                            return <div key={id} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-xs text-slate-500">{u?.fullName[0]}</div> {u?.fullName}</div>
+                                        })}
+                                    </div>
                                 </div>
                             </div>
-                            <div className="border p-4 rounded-lg">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người phối hợp</h4>
-                                <div className="space-y-2">
-                                    {selectedTask.supportAssigneeIds.map(id => {
-                                        const u = users.find(x => x.id === id);
-                                        return <div key={id} className="flex items-center gap-2 text-sm text-slate-600"><div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-xs text-slate-500">{u?.fullName[0]}</div> {u?.fullName}</div>
-                                    })}
-                                </div>
-                            </div>
-                            {selectedTask.assignerId === currentUser.id && (
-                                <button onClick={() => handleDeleteTask(selectedTask.id)} className="w-full py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-bold">Xóa công việc</button>
-                            )}
                         </div>
-                    </div>
+                    )}
                 </div>
             </div>
         </div>
