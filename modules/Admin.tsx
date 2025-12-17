@@ -75,7 +75,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return code;
   };
 
-  // ... (Keep handleDownloadTemplate, handleFileUpload logic as is) ...
   const handleDownloadTemplate = () => {
       const headers = ['HRM_CODE', 'FULL_NAME', 'EMAIL', 'USERNAME', 'PASSWORD', 'TITLE', 'UNIT_CODE'];
       const sampleData = [
@@ -103,23 +102,47 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               if (data.length === 0) throw new Error("File không có dữ liệu!");
               const newUsersPayload: any[] = [];
               const errors: string[] = [];
+              
               data.forEach((row: any, index) => {
                   const hrmCode = row['HRM_CODE'];
                   const username = row['USERNAME'];
                   const unitCode = row['UNIT_CODE'];
-                  if (!hrmCode || !username || !unitCode) { errors.push(`Dòng ${index + 2}: Thiếu HRM_CODE, USERNAME hoặc UNIT_CODE`); return; }
+                  
+                  if (!hrmCode || !username || !unitCode) { 
+                      errors.push(`Dòng ${index + 2}: Thiếu HRM_CODE, USERNAME hoặc UNIT_CODE`); 
+                      return; 
+                  }
+                  
                   const targetUnit = units.find(u => u.code === unitCode);
-                  if (!targetUnit) { errors.push(`Dòng ${index + 2}: Mã đơn vị '${unitCode}' không tồn tại.`); return; }
+                  if (!targetUnit) { 
+                      errors.push(`Dòng ${index + 2}: Mã đơn vị '${unitCode}' không tồn tại.`); 
+                      return; 
+                  }
+                  
+                  // FIX PASSWORDS: Force convert to string and trim spaces
                   let rawPassword = '123456'; 
-                  if (row['PASSWORD'] && String(row['PASSWORD']).trim() !== '') rawPassword = String(row['PASSWORD']);
+                  const excelPass = row['PASSWORD'];
+                  if (excelPass !== undefined && excelPass !== null && String(excelPass).trim() !== '') {
+                      rawPassword = String(excelPass).trim();
+                  }
+
                   const hashedPassword = md5(rawPassword); 
+                  
                   newUsersPayload.push({
-                      hrm_code: String(hrmCode), full_name: row['FULL_NAME'] || 'Chưa đặt tên', email: row['EMAIL'] || '',
-                      username: String(username), password: hashedPassword, title: row['TITLE'] || 'Nhân viên',
-                      unit_id: targetUnit.id, can_manage: false, is_first_login: true
+                      hrm_code: String(hrmCode), 
+                      full_name: row['FULL_NAME'] || 'Chưa đặt tên', 
+                      email: row['EMAIL'] || '',
+                      username: String(username).trim(), 
+                      password: hashedPassword, 
+                      title: row['TITLE'] || 'Nhân viên',
+                      unit_id: targetUnit.id, 
+                      can_manage: false, 
+                      is_first_login: true
                   });
               });
+              
               if (errors.length > 0) alert(`Có lỗi trong file:\n${errors.join('\n')}\n\nCác dòng hợp lệ vẫn sẽ được thêm.`);
+              
               if (newUsersPayload.length > 0) {
                   const { data: insertedData, error } = await supabase.from('users').insert(newUsersPayload).select();
                   if (error) throw error;
@@ -134,7 +157,12 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       setIsImportModalOpen(false);
                   }
               }
-          } catch (err: any) { alert("Lỗi nhập file: " + err.message); } finally { setIsProcessing(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+          } catch (err: any) { 
+              alert("Lỗi nhập file: " + err.message); 
+          } finally { 
+              setIsProcessing(false); 
+              if (fileInputRef.current) fileInputRef.current.value = ''; 
+          }
       };
       reader.readAsBinaryString(file);
   };
@@ -174,7 +202,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       }
   };
 
-  // ... (Keep handleSave, handleResetPassword, handleDelete logic as is) ...
   const handleSave = async () => {
     if (activeTab === 'users' && !editingItem && (!formData.username || !formData.password)) { alert("Vui lòng nhập Username và Password"); return; }
     setIsProcessing(true);
@@ -201,7 +228,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             }
         } else {
             const dbUser: any = { hrm_code: formData.hrmCode, full_name: formData.fullName, email: formData.email, title: formData.title || Role.STAFF, unit_id: formData.unitId || visibleUnits[0]?.id, username: formData.username, can_manage: formData.canManageUsers || false };
-            if (!editingItem) { dbUser.password = md5(String(formData.password)); dbUser.is_first_login = true; }
+            if (!editingItem) { 
+                // Create: Hash password
+                dbUser.password = md5(String(formData.password).trim()); 
+                dbUser.is_first_login = true; 
+            }
             if (editingItem) {
                 const { username, password, ...updatePayload } = dbUser;
                 const { error } = await supabase.from('users').update(updatePayload).eq('id', editingItem.id);
@@ -221,7 +252,18 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
         setIsModalOpen(false); setEditingItem(null); setFormData({});
     } catch (err: any) { alert("Lỗi khi lưu dữ liệu: " + err.message); } finally { setIsProcessing(false); }
   };
-  const handleResetPassword = async (userId: string) => { if (!confirm("Bạn có chắc chắn muốn reset mật khẩu về '123456'?")) return; try { const defaultHash = md5('123456'); const { error } = await supabase.from('users').update({ password: defaultHash, is_first_login: true }).eq('id', userId); if (error) throw error; setUsers(users.map(u => u.id === userId ? { ...u, password: defaultHash, isFirstLogin: true } : u)); alert("Đã reset mật khẩu thành công!"); } catch(err: any) { alert("Lỗi: " + err.message); } };
+
+  const handleResetPassword = async (userId: string) => { 
+      if (!confirm("Bạn có chắc chắn muốn reset mật khẩu về '123456'?")) return; 
+      try { 
+          const defaultHash = md5('123456'); 
+          const { error } = await supabase.from('users').update({ password: defaultHash, is_first_login: true }).eq('id', userId); 
+          if (error) throw error; 
+          setUsers(users.map(u => u.id === userId ? { ...u, password: defaultHash, isFirstLogin: true } : u)); 
+          alert("Đã reset mật khẩu thành công!"); 
+      } catch(err: any) { alert("Lỗi: " + err.message); } 
+  };
+
   const handleDelete = async (id: string) => { if (id === currentUser.id) return alert("Không thể xóa chính mình!"); if (activeTab === 'units' && isSubAdmin && id === currentUser.unitId) return alert("Không thể xóa đơn vị gốc của bạn."); if (confirm("Bạn có chắc chắn muốn xóa không?")) { setIsProcessing(true); try { if (activeTab === 'units') { if (units.some(u => u.parentId === id)) throw new Error("Phải xóa đơn vị con trước."); if (users.some(u => u.unitId === id)) throw new Error("Đơn vị vẫn còn nhân sự."); const { error } = await supabase.from('units').delete().eq('id', id); if (error) throw error; setUnits(units.filter(u => u.id !== id)); } else { const { error } = await supabase.from('users').delete().eq('id', id); if (error) throw error; setUsers(users.filter(u => u.id !== id)); } } catch (err: any) { alert("Không thể xóa: " + err.message); } finally { setIsProcessing(false); } } };
   const openModal = (item?: any, parentId?: string) => { setEditingItem(item); const defaultUnitId = isSubAdmin ? currentUser.unitId : (parentId || visibleUnits[0]?.id); setFormData(item || { parentId: parentId || null, unitId: defaultUnitId, password: '123456', title: Role.STAFF }); setIsModalOpen(true); };
   
@@ -403,7 +445,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                           <ul className="list-disc pl-5 space-y-1">
                               <li>Sử dụng đúng <strong>File mẫu chuẩn</strong> để tránh lỗi.</li>
                               <li>Cột <strong>UNIT_CODE</strong> phải khớp với Mã đơn vị đã khai báo.</li>
-                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong> (Hệ thống sẽ tự mã hóa).</li>
+                              <li>Mật khẩu mặc định nếu bỏ trống là: <strong>123456</strong>.</li>
                           </ul>
                       </div>
                   </div>

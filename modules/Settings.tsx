@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2, Lock, ArrowDownCircle, ArrowUpCircle, Wifi, XCircle } from 'lucide-react';
+import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2, Lock, ArrowDownCircle, ArrowUpCircle, Wifi, XCircle, Info } from 'lucide-react';
 import { User } from '../types';
 
 interface SettingsProps {
@@ -70,12 +70,12 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         setTimeout(() => {
             setIsCheckingConnection(false);
             
-            // Giả lập logic kiểm tra: Nếu port là số hợp lệ thì OK
+            // Giả lập logic kiểm tra
             const isSmtpPortValid = !isNaN(Number(emailConfig.port));
             const isIncomingPortValid = !isNaN(Number(emailConfig.incomingPort));
 
             if (isSmtpPortValid && isIncomingPortValid) {
-                alert(`[KẾT QUẢ KIỂM TRA]\n\n✅ SMTP Connection (${emailConfig.host}:${emailConfig.port})... OK\n✅ ${emailConfig.incomingProtocol.toUpperCase()} Connection (${emailConfig.incomingHost}:${emailConfig.incomingPort})... OK\n\n🟢 KẾT NỐI THÀNH CÔNG!`);
+                alert(`[MÔ PHỎNG THÀNH CÔNG]\n\nHệ thống ghi nhận cấu hình hợp lệ:\n✅ SMTP: ${emailConfig.host}:${emailConfig.port}\n✅ ${emailConfig.incomingProtocol.toUpperCase()}: ${emailConfig.incomingHost}:${emailConfig.incomingPort}\n\n(Lưu ý: Đây là kiểm tra giả lập vì trình duyệt không cho phép kết nối trực tiếp đến Mail Server)`);
             } else {
                 alert(`[LỖI KẾT NỐI]\n\n❌ Không thể kết nối đến máy chủ.\nVui lòng kiểm tra lại Port hoặc tường lửa.`);
             }
@@ -89,7 +89,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         setIsTesting(true);
         setTimeout(() => {
             setIsTesting(false);
-            alert(`[SIMULATION]\nSMTP: ${emailConfig.host}:${emailConfig.port} (${emailConfig.encryption.toUpperCase()})\nIncoming: ${emailConfig.incomingHost}:${emailConfig.incomingPort} (${emailConfig.incomingProtocol.toUpperCase()})\n\nĐã gửi email test thành công đến: ${testEmail}`);
+            alert(`[ĐÃ GỬI MÔ PHỎNG]\n\nEmail giả lập đã được gửi đến: ${testEmail}\n\n⚠️ QUAN TRỌNG: Bạn sẽ KHÔNG nhận được email thực tế vì ứng dụng này đang chạy trên trình duyệt (Frontend Only) và không có Backend Server để thực hiện giao thức SMTP.`);
         }, 2000);
     };
 
@@ -118,6 +118,20 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     return (
         <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
             <h2 className="text-2xl font-bold text-slate-800">Cài đặt hệ thống</h2>
+            
+            {/* Warning Banner */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3 text-amber-900 text-sm">
+                <Info className="shrink-0 text-amber-600" size={24} />
+                <div>
+                    <span className="font-bold text-amber-700 uppercase">Lưu ý về môi trường chạy (Client-side Only):</span>
+                    <p className="mt-1">
+                        Hiện tại ứng dụng đang chạy hoàn toàn trên trình duyệt web. Do các chính sách bảo mật của trình duyệt (Browser Security), việc kết nối trực tiếp socket đến <strong>SMTP/IMAP Server</strong> là không thể thực hiện được nếu không có Backend trung gian.
+                    </p>
+                    <p className="mt-2 font-medium">
+                        👉 Các chức năng "Kiểm tra kết nối" và "Gửi thử" bên dưới đang hoạt động ở chế độ <span className="underline">MÔ PHỎNG (SIMULATION)</span> để kiểm tra logic nhập liệu và giao diện. Sẽ không có email thực tế nào được gửi đi.
+                    </p>
+                </div>
+            </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="p-4 border-b bg-slate-50 flex items-center gap-2">
@@ -126,16 +140,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                 </div>
                 
                 <div className="p-6 space-y-6">
-                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 flex gap-3 items-start">
-                        <AlertCircle className="text-blue-600 shrink-0 mt-0.5" size={20}/>
-                        <div className="text-sm text-blue-800">
-                            <p className="font-bold mb-1">Lưu ý bảo mật:</p>
-                            <ul className="list-disc pl-5 space-y-1">
-                                <li>Với Gmail, bắt buộc bật <strong>Xác thực 2 bước</strong> và tạo <strong>Mật khẩu ứng dụng (App Password)</strong>.</li>
-                            </ul>
-                        </div>
-                    </div>
-
                     {/* Service Selection */}
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Dịch vụ Email</label>
@@ -239,7 +243,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                         <div className="flex gap-2 w-full">
                              <input type="email" placeholder="Email nhận test..." className="border rounded-lg px-3 py-2 text-sm flex-1 md:w-64" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
                             <button onClick={handleSendTestEmail} disabled={isTesting} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap">
-                                {isTesting ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Gửi thử
+                                {isTesting ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Gửi thử (Simulate)
                             </button>
                         </div>
                     </div>
