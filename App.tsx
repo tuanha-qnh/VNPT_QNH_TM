@@ -9,7 +9,7 @@ import Settings from './modules/Settings';
 import { supabase } from './utils/supabaseClient'; 
 import { Task, Unit, User, Role } from './types';
 import { SQL_SETUP_SCRIPT } from './utils/dbSetup'; 
-import { Search, User as UserIcon, LogOut, Lock, RotateCcw, Loader2, Database, WifiOff, Mail, KeyRound, ShieldAlert, PlayCircle, Copy, Check, Server } from 'lucide-react';
+import { Search, LogOut, Lock, Loader2, ShieldAlert, Copy, Check } from 'lucide-react';
 import md5 from 'md5'; 
 
 const App: React.FC = () => {
@@ -23,7 +23,7 @@ const App: React.FC = () => {
   const [forgotEmail, setForgotEmail] = useState('');
 
   const logoutTimerRef = useRef<any>(null);
-  const AUTO_LOGOUT_TIME = 30 * 60 * 1000; // Tăng lên 30 phút (30 * 60 * 1000 ms)
+  const AUTO_LOGOUT_TIME = 30 * 60 * 1000; // 30 phút
 
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -95,8 +95,13 @@ const App: React.FC = () => {
   const fetchInitialData = async () => {
       setIsLoading(true);
       try {
+          // Kiểm tra bảng units
           const { data: unitsData, error: uErr } = await supabase.from('units').select('*').order('level', { ascending: true });
-          if (uErr && isTableMissingError(uErr.message)) setShowSetupModal(true);
+          if (uErr && isTableMissingError(uErr.message)) { setShowSetupModal(true); setIsLoading(false); return; }
+
+          // Kiểm tra bảng kpis (Quan trọng để fix lỗi của khách hàng)
+          const { error: kErr } = await supabase.from('kpis').select('id').limit(1);
+          if (kErr && isTableMissingError(kErr.message)) { setShowSetupModal(true); setIsLoading(false); return; }
 
           const mappedUnits: Unit[] = (unitsData || []).map((u: any) => ({
               id: u.id, code: u.code, name: u.name, parentId: u.parent_id,
@@ -128,7 +133,7 @@ const App: React.FC = () => {
           setTasks(mappedTasks);
 
       } catch (error: any) {
-          console.error("Lỗi kết nối chung:", error);
+          console.error("Lỗi kết nối cơ sở dữ liệu:", error);
       } finally {
           setIsLoading(false);
       }
@@ -275,15 +280,15 @@ const App: React.FC = () => {
           <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
               <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl text-center">
                   <ShieldAlert size={48} className="mx-auto text-orange-600 mb-4" />
-                  <h2 className="text-xl font-bold mb-4">Cần cấu hình Database</h2>
+                  <h2 className="text-xl font-bold mb-4">Database không tìm thấy bảng 'kpis'</h2>
                   <div className="text-left space-y-4 text-sm text-slate-600 mb-6">
-                      <p>Vui lòng chạy script SQL Setup trên Supabase để tạo các bảng (bao gồm bảng <b>kpis</b> mới).</p>
+                      <p>Vui lòng copy và chạy script SQL Setup bên dưới vào phần <b>SQL Editor</b> trên Supabase Dashboard của bạn để tạo bảng 'kpis' và các ràng buộc cần thiết.</p>
                       <pre className="bg-slate-800 text-slate-200 p-4 rounded-lg h-40 overflow-y-auto font-mono text-[10px]">{SQL_SETUP_SCRIPT}</pre>
                   </div>
                   <button onClick={handleCopySQL} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 mx-auto">
-                      {copySuccess ? <Check size={16}/> : <Copy size={16}/>} Copy SQL
+                      {copySuccess ? <Check size={16}/> : <Copy size={16}/>} Copy SQL Script
                   </button>
-                  <button onClick={() => window.location.reload()} className="mt-4 block mx-auto text-blue-600 underline">Đã chạy xong SQL, Tải lại trang</button>
+                  <button onClick={() => window.location.reload()} className="mt-4 block mx-auto text-blue-600 underline">Tôi đã chạy xong SQL, Tải lại trang</button>
               </div>
           </div>
       )
