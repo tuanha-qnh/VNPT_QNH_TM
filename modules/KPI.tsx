@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, Unit, KPIData, GroupKPIData, KPI_KEYS, KPIKey, Role } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft, Users, Settings as SettingsIcon, Trash2, Edit, X } from 'lucide-react';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft, Users, Settings as SettingsIcon, Trash2, Edit, X, Clock, PlayCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { loadData, saveData } from '../utils/mockData';
 
@@ -16,42 +16,9 @@ interface KPIProps {
 interface DataSourceConfig {
     url: string;
     lastSync: string;
+    autoSync: boolean;
     mapping: { [key: string]: string }; 
 }
-
-// Generate random KPI data for demo fallback
-const generateKPI = (users: User[]): KPIData[] => {
-    return users.map(u => {
-        const targets: any = {};
-        Object.keys(KPI_KEYS).forEach(key => {
-            const target = Math.floor(Math.random() * 50) + 50;
-            const actual = Math.floor(Math.random() * target * 1.2); 
-            targets[key] = { target, actual };
-        });
-        return {
-            hrmCode: u.hrmCode,
-            fullName: u.fullName,
-            unitId: u.unitId,
-            targets
-        };
-    });
-};
-
-const generateGroupKPI = (units: Unit[]): GroupKPIData[] => {
-    return units.map(u => {
-        const targets: any = {};
-        Object.keys(KPI_KEYS).forEach(key => {
-            const target = Math.floor(Math.random() * 500) + 200;
-            const actual = Math.floor(Math.random() * target * 1.1); 
-            targets[key] = { target, actual };
-        });
-        return {
-            unitCode: u.code,
-            unitName: u.name,
-            targets
-        };
-    });
-};
 
 const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config' | 'manage'>('eval'); 
@@ -64,16 +31,17 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
 
-  // State for KPI Data (Generic type based on mode)
+  // State for KPI Data - KHỞI TẠO RỖNG, KHÔNG MOCK DATA
   const [kpiData, setKpiData] = useState<any[]>([]);
-  const [isDataLoaded, setIsDataLoaded] = useState(false); // Flag to track if data is loaded from storage
+  const [isDataLoaded, setIsDataLoaded] = useState(false); 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // State for Google Sheet Config
-  const [dsConfig, setDsConfig] = useState<DataSourceConfig>({ url: '', lastSync: '', mapping: {} });
+  const [dsConfig, setDsConfig] = useState<DataSourceConfig>({ url: '', lastSync: '', autoSync: true, mapping: {} });
   const [sheetHeaders, setSheetHeaders] = useState<string[]>([]);
   const [isCheckingLink, setIsCheckingLink] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [previewData, setPreviewData] = useState<any[]>([]);
 
   // Permission Logic
   const isAdmin = currentUser.hrmCode === 'ADMIN';
@@ -93,63 +61,106 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
       ...Object.keys(KPI_KEYS).map(k => ({ key: `${k.toUpperCase()}_ACTUAL`, label: `[${k.toUpperCase()}] Thực hiện`, required: false })),
   ];
 
-  // Initialize data
+  // --- 1. AGGREGATION LOGIC (TỔNG HỢP SỐ LIỆU ĐƠN VỊ CHA) ---
+  const calculateAggregations = useCallback((data: any[]) => {
+      // Chỉ áp dụng tính tổng cho mode Group (Tập thể)
+      if (mode !== 'group') return data;
+
+      // Deep copy để tránh mutation
+      let currentData = [...data];
+      
+      // Lấy danh sách các đơn vị cha (Level 0 - VNPT Quảng Ninh)
+      const rootUnits = units.filter(u => u.parentId === null);
+
+      rootUnits.forEach(root => {
+          // Tìm tất cả đơn vị con cháu (Descendants) của Root này
+          // Hàm đệ quy lấy ID con
+          const getDescendantIds = (parentId: string): string[] => {
+              const children = units.filter(u => u.parentId === parentId);
+              let ids = children.map(c => c.id);
+              children.forEach(c => {
+                  ids = [...ids, ...getDescendantIds(c.id)];
+              });
+              return ids;
+          };
+
+          const descendantIds = getDescendantIds(root.id);
+          const descendantCodes = units.filter(u => descendantIds.includes(u.id)).map(u => u.code);
+
+          // Khởi tạo biến tổng
+          const totals: any = {};
+          Object.keys(KPI_KEYS).forEach(key => totals[key] = { target: 0, actual: 0 });
+
+          // Duyệt qua dữ liệu hiện tại, nếu item thuộc con cháu thì cộng dồn
+          currentData.forEach(record => {
+              if (descendantCodes.includes(record.unitCode)) {
+                  Object.keys(KPI_KEYS).forEach(key => {
+                      const t = record.targets[key] || { target: 0, actual: 0 };
+                      totals[key].target += (t.target || 0);
+                      totals[key].actual += (t.actual || 0);
+                  });
+              }
+          });
+
+          // Tạo hoặc cập nhật record cho Đơn vị cha
+          const rootRecordIndex = currentData.findIndex(r => r.unitCode === root.code);
+          const rootRecord = {
+              unitCode: root.code,
+              unitName: root.name,
+              targets: totals
+          };
+
+          if (rootRecordIndex >= 0) {
+              currentData[rootRecordIndex] = rootRecord;
+          } else {
+              currentData.push(rootRecord);
+          }
+      });
+
+      return currentData;
+  }, [units, mode]);
+
+  // --- 2. LOAD DATA & CONFIG ---
   useEffect(() => {
-    // Check permission for group mode
     if (mode === 'group' && !canViewGroup) {
         setIsDataLoaded(true);
         return;
     }
 
     const storedData = localStorage.getItem(DATA_STORAGE_KEY);
-    
     if (storedData) {
         try {
             const parsed = JSON.parse(storedData);
             setKpiData(parsed);
         } catch (e) {
             console.error("Error parsing KPI data", e);
-            const initial = mode === 'personal' ? generateKPI(users) : generateGroupKPI(units);
-            setKpiData(initial);
+            setKpiData([]); // Dữ liệu lỗi thì reset về rỗng
         }
     } else {
-        // Only generate initial mock data if nothing is in storage (First run)
-        const initial = mode === 'personal' ? generateKPI(users) : generateGroupKPI(units);
-        setKpiData(initial);
+        setKpiData([]); // Mặc định rỗng, KHÔNG tạo mock data
     }
     
-    // Config
-    const savedConfig = loadData<DataSourceConfig>(CONFIG_STORAGE_KEY, { url: '', lastSync: '', mapping: {} });
+    const savedConfig = loadData<DataSourceConfig>(CONFIG_STORAGE_KEY, { url: '', lastSync: '', autoSync: true, mapping: {} });
     setDsConfig(savedConfig);
     
     setIsDataLoaded(true);
-  }, [users, units, mode]);
+  }, [mode, users, units]);
 
-  // Save whenever data changes (Only after loaded)
+  // --- 3. PERSIST DATA ---
   useEffect(() => {
       if (isDataLoaded) {
           saveData(DATA_STORAGE_KEY, kpiData);
       }
-  }, [kpiData, isDataLoaded, mode]);
+  }, [kpiData, isDataLoaded, DATA_STORAGE_KEY]);
 
   useEffect(() => {
       if (isDataLoaded) {
           saveData(CONFIG_STORAGE_KEY, dsConfig);
       }
-  }, [dsConfig, isDataLoaded]);
+  }, [dsConfig, isDataLoaded, CONFIG_STORAGE_KEY]);
 
-  // Permission Guard
-  if (mode === 'group' && !canViewGroup) {
-      return (
-          <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl shadow-sm">
-              <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><Users size={32} /></div>
-              <h3 className="text-lg font-bold text-slate-800">Không có quyền truy cập</h3>
-              <p className="text-slate-500">Chỉ Giám đốc, PGĐ, Trưởng/Phó phòng mới được xem KPI Tập thể toàn tỉnh.</p>
-          </div>
-      );
-  }
 
-  // --- GOOGLE SHEET LOGIC ---
+  // --- 4. GOOGLE SHEET & AUTO SYNC LOGIC ---
 
   const fetchCSV = async (url: string): Promise<any[]> => {
       try {
@@ -165,6 +176,60 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
       }
   };
 
+  const handleSyncData = useCallback(async (isManual = false) => {
+      if (!dsConfig.url) {
+          if (isManual) alert("Chưa cấu hình đường dẫn dữ liệu.");
+          return;
+      }
+      
+      setIsSyncing(true);
+      try {
+          const rawData = await fetchCSV(dsConfig.url);
+          // Sử dụng mapping mới nhất từ state hoặc từ tham số nếu cần thiết
+          // Ở đây dùng dsConfig.mapping
+          
+          if (Object.keys(dsConfig.mapping).length === 0) {
+              if (isManual) alert("Chưa cấu hình Mapping dữ liệu.");
+              return;
+          }
+
+          const transformedData = rawData.map((row: any) => {
+              const newRow: any = {};
+              Object.entries(dsConfig.mapping).forEach(([sysKey, sheetHeader]) => {
+                  const headerKey = sheetHeader as string;
+                  if (headerKey && row[headerKey] !== undefined) {
+                      newRow[sysKey] = row[headerKey];
+                  }
+              });
+              return newRow;
+          });
+
+          processImportData(transformedData, isManual);
+          
+          setDsConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
+      } catch (e) {
+          console.error("Sync Error", e);
+          if (isManual) alert("Lỗi khi đồng bộ dữ liệu. Vui lòng kiểm tra kết nối.");
+      } finally {
+          setIsSyncing(false);
+      }
+  }, [dsConfig.url, dsConfig.mapping]);
+
+  // --- AUTOMATIC SYNC INTERVAL (10 MINUTES) ---
+  useEffect(() => {
+      if (!dsConfig.url || !dsConfig.autoSync || !isDataLoaded) return;
+
+      console.log(`[KPI ${mode}] Đăng ký tự động đồng bộ mỗi 10 phút...`);
+      const intervalId = setInterval(() => {
+          console.log(`[KPI ${mode}] Tự động đồng bộ kích hoạt lúc ${new Date().toLocaleTimeString()}`);
+          handleSyncData(false);
+      }, 600000); // 600,000 ms = 10 phút
+
+      return () => clearInterval(intervalId);
+  }, [dsConfig.url, dsConfig.autoSync, isDataLoaded, handleSyncData, mode]);
+
+
+  // Check connection & Get Headers
   const checkConnection = async () => {
       if (!dsConfig.url) return alert("Vui lòng nhập đường dẫn CSV Google Sheet");
       setIsCheckingLink(true);
@@ -173,6 +238,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           if (data.length > 0) {
               const headers = Object.keys(data[0]);
               setSheetHeaders(headers);
+              setPreviewData(data.slice(0, 5)); // Lưu 5 dòng đầu để preview
               alert(`Kết nối thành công! Tìm thấy ${headers.length} cột dữ liệu.`);
           } else {
               alert("Kết nối thành công nhưng file không có dữ liệu.");
@@ -184,35 +250,6 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
       }
   };
 
-  const handleSyncData = async () => {
-      if (!dsConfig.url) return alert("Chưa cấu hình đường dẫn dữ liệu.");
-      setIsSyncing(true);
-      try {
-          const rawData = await fetchCSV(dsConfig.url);
-          
-          const transformedData = rawData.map((row: any) => {
-              const newRow: any = {};
-              Object.entries(dsConfig.mapping).forEach(([sysKey, sheetHeader]) => {
-                  const header = sheetHeader as string;
-                  if (header && row[header] !== undefined) {
-                      newRow[sysKey] = row[header];
-                  }
-              });
-              return newRow;
-          });
-
-          processImportData(transformedData, false);
-          
-          setDsConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
-          alert("Đồng bộ dữ liệu thành công!");
-          setActiveTab('eval');
-      } catch (e) {
-          alert("Lỗi khi đồng bộ dữ liệu. Vui lòng kiểm tra kết nối.");
-      } finally {
-          setIsSyncing(false);
-      }
-  };
-
   const updateMapping = (sysKey: string, sheetHeader: string) => {
       setDsConfig(prev => ({
           ...prev,
@@ -220,16 +257,26 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
       }));
   };
 
-  // --- EXISTING LOGIC ---
+  // --- PROCESSING IMPORT DATA ---
 
   const processImportData = (jsonData: any[], showAlert = true) => {
       if (!jsonData || jsonData.length === 0) return;
-      const newKpiData = [...kpiData];
-      let matchCount = 0;
+      
+      // 1. Convert imported JSON to System KPI Format
+      let processedList: any[] = [];
+      
+      // Nếu là append: let processedList = [...kpiData];
+      // Nếu là replace (đồng bộ): let processedList = [];
+      // Ở đây ta dùng chiến thuật: Merge vào list cũ hoặc tạo list mới. 
+      // Với đồng bộ tự động, tốt nhất là cập nhật trên list hiện có để giữ các record không có trong file sync (nếu có).
+      // TUY NHIÊN: Yêu cầu là "Đồng bộ", nên dữ liệu từ Sheet là nguồn chuẩn (Single Source of Truth) cho các items đó.
+      
+      let newList = [...kpiData];
 
       jsonData.forEach((row: any) => {
           const normalizedRow: any = {};
-          Object.keys(row).forEach(k => normalizedRow[k.toUpperCase()] = row[k]);
+          // Chuyển key về uppercase để match systemFields nếu cần, nhưng mapping đã handle việc gán đúng key.
+          Object.keys(row).forEach(k => normalizedRow[k] = row[k]);
           
           const idValue = normalizedRow[ID_KEY]; 
           if (!idValue) return;
@@ -239,23 +286,26 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           let entityUnitId = ''; // Only for personal
 
           if (mode === 'personal') {
-              targetIndex = newKpiData.findIndex(k => k.hrmCode === String(idValue));
+              targetIndex = newList.findIndex(k => k.hrmCode === String(idValue));
               const user = users.find(u => u.hrmCode === String(idValue));
               if (user) {
-                  matchCount++;
                   entityName = user.fullName;
                   entityUnitId = user.unitId;
-              } else return;
+              } else {
+                  // Nếu không tìm thấy user trong hệ thống, vẫn import nhưng lấy tên tạm hoặc bỏ qua
+                  // Ở đây ta bỏ qua để đảm bảo tính toàn vẹn
+                  return; 
+              }
           } else {
-               targetIndex = newKpiData.findIndex(k => k.unitCode === String(idValue));
+               targetIndex = newList.findIndex(k => k.unitCode === String(idValue));
                const unit = units.find(u => u.code === String(idValue));
                if (unit) {
-                   matchCount++;
                    entityName = unit.name;
                } else return;
           }
 
-          const targets: any = targetIndex >= 0 ? { ...newKpiData[targetIndex].targets } : {};
+          // Merge targets
+          const targets: any = targetIndex >= 0 ? { ...newList[targetIndex].targets } : {};
           Object.keys(KPI_KEYS).forEach(key => {
               const targetKey = `${key.toUpperCase()}_TARGET`;
               const actualKey = `${key.toUpperCase()}_ACTUAL`;
@@ -277,13 +327,17 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                record = { unitCode: String(idValue), unitName: entityName, targets: targets };
           }
 
-          if (targetIndex >= 0) newKpiData[targetIndex] = record;
-          else newKpiData.push(record);
+          if (targetIndex >= 0) newList[targetIndex] = record;
+          else newList.push(record);
       });
+
+      // 2. Perform Aggregation (Cộng dồn lên đơn vị cha)
+      const aggregatedList = calculateAggregations(newList);
       
-      setKpiData(newKpiData);
+      setKpiData(aggregatedList);
+      
       if (showAlert) {
-          alert(`Đã cập nhật dữ liệu thành công cho ${matchCount} mục.`);
+          alert(`Đã cập nhật dữ liệu thành công! (Tổng số: ${aggregatedList.length} bản ghi)`);
           setActiveTab('eval');
       }
   };
@@ -326,7 +380,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
 
   const getChartData = (data: any[]) => {
       return data.map(item => {
-          const t = item.targets[filterKey] || { target: 0, actual: 0 };
+          const t = item.targets?.[filterKey] || { target: 0, actual: 0 };
           const percent = t.target > 0 ? (t.actual / t.target) * 100 : 0;
           return { 
               name: mode === 'personal' ? item.fullName : item.unitName,
@@ -377,7 +431,9 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
       if (!confirm("Bạn có chắc chắn muốn xóa bộ chỉ số này không?")) return;
       const newData = [...kpiData];
       newData.splice(index, 1);
-      setKpiData(newData);
+      // Recalculate Aggregation after delete
+      const aggData = calculateAggregations(newData);
+      setKpiData(aggData);
   };
 
   const openEditModal = (item: any) => {
@@ -387,11 +443,15 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
 
   const handleSaveEdit = () => {
       if (!editingItem) return;
-      const newData = kpiData.map(item => {
+      let newData = kpiData.map(item => {
           const itemId = mode === 'personal' ? item.hrmCode : item.unitCode;
           const editId = mode === 'personal' ? editingItem.hrmCode : editingItem.unitCode;
           return itemId === editId ? editingItem : item;
       });
+      
+      // Recalculate aggregation after manual edit
+      newData = calculateAggregations(newData);
+
       setKpiData(newData);
       setIsEditModalOpen(false);
       setEditingItem(null);
@@ -409,6 +469,17 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           }
       }));
   };
+
+  // Guard: Check permission for group mode
+  if (mode === 'group' && !canViewGroup) {
+      return (
+          <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl shadow-sm">
+              <div className="bg-red-100 p-4 rounded-full text-red-600 mb-4"><Users size={32} /></div>
+              <h3 className="text-lg font-bold text-slate-800">Không có quyền truy cập</h3>
+              <p className="text-slate-500">Chỉ Giám đốc, PGĐ, Trưởng/Phó phòng mới được xem KPI Tập thể toàn tỉnh.</p>
+          </div>
+      );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -439,10 +510,12 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
        {/* --- CONFIG TAB (ADMIN ONLY) --- */}
        {activeTab === 'config' && isAdmin && (
            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-               <div className="p-6 border-b border-slate-100">
-                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4"><Database className="text-blue-600"/> Liên kết Google Sheet (CSV)</h3>
-                   <div className="flex gap-4 items-end mb-4">
-                       <div className="flex-1">
+               <div className="p-6 border-b border-slate-100 bg-slate-50">
+                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2"><Database className="text-blue-600"/> Liên kết Google Sheet (CSV)</h3>
+                   <p className="text-sm text-slate-500 mb-4">Hệ thống sẽ tự động đồng bộ dữ liệu mỗi 10 phút nếu được bật.</p>
+                   
+                   <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
+                       <div className="flex-1 w-full">
                            <label className="block text-sm font-bold text-slate-700 mb-1">Đường dẫn CSV (Publish to web)</label>
                            <div className="flex gap-2">
                                <input 
@@ -458,45 +531,62 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                                    className="px-4 py-2 bg-slate-800 text-white rounded-lg font-bold hover:bg-slate-900 flex items-center gap-2 whitespace-nowrap"
                                >
                                    {isCheckingLink ? <RefreshCw className="animate-spin" size={18}/> : <Check size={18}/>}
-                                   Kiểm tra
+                                   Đọc dữ liệu nguồn
                                </button>
                            </div>
                        </div>
                    </div>
+
+                   <div className="flex items-center gap-3 mt-2">
+                        <input type="checkbox" id="autoSync" checked={dsConfig.autoSync} onChange={e => setDsConfig({...dsConfig, autoSync: e.target.checked})} className="w-4 h-4 text-blue-600 rounded" />
+                        <label htmlFor="autoSync" className="text-sm font-medium text-slate-700 cursor-pointer select-none">Tự động đồng bộ 10 phút/lần</label>
+                   </div>
                </div>
 
                {/* MAPPING SECTION */}
-               <div className="p-6 bg-slate-50">
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                       {systemFields.map((field) => (
-                           <div key={field.key} className="flex items-center gap-4 bg-white p-3 rounded border border-slate-200">
-                               <div className="w-1/2">
-                                   <div className="text-sm font-bold text-slate-700">{field.label}</div>
-                                   <div className="text-xs text-slate-400 font-mono">{field.key}</div>
-                               </div>
-                               <div className="w-1/2">
-                                   <select 
-                                       className="w-full border rounded p-2 text-sm outline-none focus:border-blue-500"
-                                       value={dsConfig.mapping[field.key] || ''}
-                                       onChange={(e) => updateMapping(field.key, e.target.value)}
-                                   >
-                                       <option value="">-- Chọn cột --</option>
-                                       {sheetHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                                   </select>
-                               </div>
-                           </div>
-                       ))}
+               <div className="p-6">
+                   <div className="flex justify-between items-center mb-4">
+                        <h4 className="font-bold text-slate-700">Cấu hình ánh xạ (Mapping)</h4>
+                        {sheetHeaders.length > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Đã tìm thấy {sheetHeaders.length} cột từ nguồn</span>}
                    </div>
+                   
+                   {sheetHeaders.length === 0 ? (
+                       <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-lg bg-slate-50">
+                           <Database className="mx-auto text-slate-300 mb-2" size={32}/>
+                           <p className="text-slate-500">Vui lòng nhập URL và bấm "Đọc dữ liệu nguồn" để lấy danh sách cột.</p>
+                       </div>
+                   ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                            {systemFields.map((field) => (
+                                <div key={field.key} className="flex items-center gap-4 bg-slate-50 p-3 rounded border border-slate-200">
+                                    <div className="w-1/2">
+                                        <div className="text-sm font-bold text-slate-700">{field.label} {field.required && <span className="text-red-500">*</span>}</div>
+                                        <div className="text-xs text-slate-400 font-mono">{field.key}</div>
+                                    </div>
+                                    <div className="w-1/2">
+                                        <select 
+                                            className="w-full border rounded p-2 text-sm outline-none focus:border-blue-500 bg-white"
+                                            value={dsConfig.mapping[field.key] || ''}
+                                            onChange={(e) => updateMapping(field.key, e.target.value)}
+                                        >
+                                            <option value="">-- Chọn cột nguồn --</option>
+                                            {sheetHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                   )}
                </div>
                
-               <div className="p-4 border-t bg-white flex justify-end">
+               <div className="p-4 border-t bg-slate-50 flex justify-end gap-3">
                    <button 
-                       onClick={handleSyncData}
+                       onClick={() => handleSyncData(true)}
                        disabled={isSyncing || sheetHeaders.length === 0}
                        className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                    >
-                       {isSyncing ? <RefreshCw className="animate-spin" size={20}/> : <RefreshCw size={20}/>}
-                       Lưu cấu hình & Đồng bộ
+                       {isSyncing ? <RefreshCw className="animate-spin" size={20}/> : <Save size={20}/>}
+                       Lưu & Đồng bộ ngay
                    </button>
                </div>
            </div>
@@ -579,6 +669,9 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                             <li><code>FIBER_ACTUAL</code> (Thực hiện)</li>
                         </ul>
                     </li>
+                    {mode === 'group' && (
+                        <li className="font-bold text-blue-700 mt-2">Lưu ý: Đơn vị cha (VNPT Quảng Ninh) sẽ được tự động cộng dồn từ các đơn vị con. Không cần nhập thủ công.</li>
+                    )}
                 </ul>
              </div>
          </div>
@@ -602,8 +695,14 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                         {Object.entries(KPI_KEYS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
                </div>
-               <div className="text-sm text-slate-500 italic">
-                   {dsConfig.lastSync ? `Đồng bộ Google Sheet: ${dsConfig.lastSync}` : 'Dữ liệu lưu cục bộ'}
+               <div className="flex items-center gap-4 text-sm text-slate-500 italic">
+                   {dsConfig.url && (
+                        <div className="flex items-center gap-1">
+                            <Clock size={14} className={isSyncing ? "animate-spin text-blue-600" : "text-slate-400"}/>
+                            {isSyncing ? "Đang đồng bộ..." : `Đồng bộ lần cuối: ${dsConfig.lastSync || 'Chưa'}`}
+                        </div>
+                   )}
+                   <button onClick={() => handleSyncData(true)} className="text-blue-600 hover:underline flex items-center gap-1 text-xs font-bold"><RefreshCw size={12}/> Sync</button>
                </div>
             </div>
 
@@ -660,14 +759,20 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                    </thead>
                    <tbody className="divide-y divide-slate-100">
                      {filteredData.length > 0 ? filteredData.map((item, index) => {
-                         const targetData = item.targets[filterKey] || { target: 0, actual: 0 };
+                         const targetData = item.targets?.[filterKey] || { target: 0, actual: 0 };
                          const percent = targetData.target ? (targetData.actual / targetData.target) * 100 : 0;
                          const idVal = mode === 'personal' ? item.hrmCode : item.unitCode;
                          const nameVal = mode === 'personal' ? item.fullName : item.unitName;
 
+                         // Highlight rows if it's a parent unit
+                         const isParent = mode === 'group' && units.some(u => u.code === item.unitCode && u.parentId === null);
+
                          return (
-                           <tr key={index} className="hover:bg-slate-50">
-                             <td className="p-3 font-medium text-slate-800">{nameVal}</td>
+                           <tr key={index} className={`hover:bg-slate-50 ${isParent ? 'bg-blue-50/50 font-semibold' : ''}`}>
+                             <td className="p-3 font-medium text-slate-800">
+                                 {nameVal} 
+                                 {isParent && <span className="text-[10px] text-blue-600 border border-blue-200 bg-white px-1 ml-2 rounded">TỔNG</span>}
+                             </td>
                              <td className="p-3 text-xs text-slate-400">{idVal}</td>
                              <td className="p-3 text-right font-mono">{targetData.target.toLocaleString()}</td>
                              <td className="p-3 text-right font-mono font-bold text-blue-700">{targetData.actual.toLocaleString()}</td>
