@@ -144,7 +144,12 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               if (errors.length > 0) alert(`Có lỗi trong file:\n${errors.join('\n')}\n\nCác dòng hợp lệ vẫn sẽ được thêm.`);
               
               if (newUsersPayload.length > 0) {
-                  const { data: insertedData, error } = await supabase.from('users').insert(newUsersPayload).select();
+                  // SỬ DỤNG UPSERT THAY VÌ INSERT ĐỂ TRÁNH LỖI TRÙNG LẶP USERNAME
+                  // onConflict: 'username' sẽ cập nhật nếu user đã tồn tại
+                  const { data: insertedData, error } = await supabase
+                      .from('users')
+                      .upsert(newUsersPayload, { onConflict: 'username' })
+                      .select();
                   
                   if (error) throw error;
                   
@@ -154,24 +159,28 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                           username: u.username, password: u.password, title: u.title, unitId: u.unit_id,
                           isFirstLogin: u.is_first_login, canManageUsers: u.can_manage
                       }));
-                      setUsers([...users, ...mappedUsers]);
-                      alert(`Đã thêm thành công ${insertedData.length} nhân sự!`);
+
+                      // Cập nhật State (Merge thông minh: Cập nhật người cũ, Thêm người mới)
+                      const updatedUsersList = [...users];
+                      mappedUsers.forEach(newUser => {
+                          const existingIndex = updatedUsersList.findIndex(u => u.username === newUser.username);
+                          if (existingIndex >= 0) {
+                              updatedUsersList[existingIndex] = newUser;
+                          } else {
+                              updatedUsersList.push(newUser);
+                          }
+                      });
+
+                      setUsers(updatedUsersList);
+                      alert(`Đã xử lý thành công ${insertedData.length} nhân sự (Thêm mới/Cập nhật)!`);
                       setIsImportModalOpen(false);
                   }
               }
           } catch (err: any) { 
               console.error(err);
-              if (err.message && (err.message.includes('users_password_key') || err.message.includes('unique constraint'))) {
-                  alert(
-                      "🚨 LỖI DATABASE NGHIÊM TRỌNG 🚨\n\n" +
-                      "Cột mật khẩu (password) trong Database đang bị cài đặt ràng buộc DUY NHẤT (Unique).\n" +
-                      "Điều này khiến bạn không thể tạo nhiều tài khoản có cùng mật khẩu '123456'.\n\n" +
-                      "👉 CÁCH KHẮC PHỤC:\n" +
-                      "1. Truy cập Supabase SQL Editor.\n" +
-                      "2. Chạy lệnh SQL sau để gỡ bỏ ràng buộc:\n\n" +
-                      "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_password_key;\n" +
-                      "DROP INDEX IF EXISTS users_password_key;"
-                  );
+              // Chỉ hiển thị cảnh báo Unique Password nếu thực sự lỗi đó xảy ra (phòng trường hợp DB chưa apply kịp)
+              if (err.message && err.message.includes('users_password_key')) {
+                   alert("Lỗi: Database vẫn còn ràng buộc 'users_password_key'. Vui lòng chạy lại SQL Setup.");
               } else {
                   alert("Lỗi nhập file: " + err.message); 
               }
@@ -256,7 +265,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 const updatedUser = { ...editingItem, ...formData }; 
                 setUsers(users.map(u => u.id === editingItem.id ? updatedUser : u));
             } else {
-                const { data, error } = await supabase.from('users').insert([dbUser]).select();
+                // Upsert for single add as well to be safe
+                const { data, error } = await supabase.from('users').upsert([dbUser], { onConflict: 'username' }).select();
                 if (error) throw error;
                 if (data && data[0]) {
                     const u = data[0];
