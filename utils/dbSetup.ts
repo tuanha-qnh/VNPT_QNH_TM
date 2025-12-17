@@ -1,5 +1,10 @@
 
 export const SQL_SETUP_SCRIPT = `
+-- 0. KHẮC PHỤC LỖI CẤU TRÚC (QUAN TRỌNG)
+-- Xóa ràng buộc Unique trên cột password nếu lỡ bị tạo nhầm
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_password_key;
+DROP INDEX IF EXISTS users_password_key;
+
 -- 1. XÓA SẠCH DỮ LIỆU CŨ (RESET HOÀN TOÀN)
 TRUNCATE TABLE tasks, users, units RESTART IDENTITY CASCADE;
 
@@ -25,7 +30,7 @@ create table if not exists users (
   full_name text,
   email text,
   username text unique,
-  password text,
+  password text, -- Cột này KHÔNG ĐƯỢC để unique
   title text,
   unit_id uuid references units(id),
   is_first_login boolean default true,

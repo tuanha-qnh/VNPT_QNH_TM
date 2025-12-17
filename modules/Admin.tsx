@@ -145,7 +145,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               
               if (newUsersPayload.length > 0) {
                   const { data: insertedData, error } = await supabase.from('users').insert(newUsersPayload).select();
+                  
                   if (error) throw error;
+                  
                   if (insertedData) {
                       const mappedUsers: User[] = insertedData.map((u: any) => ({
                           id: u.id, hrmCode: u.hrm_code, fullName: u.full_name, email: u.email,
@@ -158,7 +160,21 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                   }
               }
           } catch (err: any) { 
-              alert("Lỗi nhập file: " + err.message); 
+              console.error(err);
+              if (err.message && (err.message.includes('users_password_key') || err.message.includes('unique constraint'))) {
+                  alert(
+                      "🚨 LỖI DATABASE NGHIÊM TRỌNG 🚨\n\n" +
+                      "Cột mật khẩu (password) trong Database đang bị cài đặt ràng buộc DUY NHẤT (Unique).\n" +
+                      "Điều này khiến bạn không thể tạo nhiều tài khoản có cùng mật khẩu '123456'.\n\n" +
+                      "👉 CÁCH KHẮC PHỤC:\n" +
+                      "1. Truy cập Supabase SQL Editor.\n" +
+                      "2. Chạy lệnh SQL sau để gỡ bỏ ràng buộc:\n\n" +
+                      "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_password_key;\n" +
+                      "DROP INDEX IF EXISTS users_password_key;"
+                  );
+              } else {
+                  alert("Lỗi nhập file: " + err.message); 
+              }
           } finally { 
               setIsProcessing(false); 
               if (fileInputRef.current) fileInputRef.current.value = ''; 
