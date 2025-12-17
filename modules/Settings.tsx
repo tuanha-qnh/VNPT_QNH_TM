@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2 } from 'lucide-react';
+import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2, Lock, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { User } from '../types';
 
 interface SettingsProps {
@@ -9,23 +9,37 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     const [emailConfig, setEmailConfig] = useState({
+        // Outgoing
         service: 'gmail',
         host: 'smtp.gmail.com',
         port: '587',
-        secure: true,
+        encryption: 'starttls',
         email: '',
-        appPassword: '', // Mật khẩu ứng dụng
-        senderName: 'VNPT Task Manager'
+        appPassword: '',
+        senderName: 'VNPT Task Manager',
+        
+        // Incoming (New)
+        incomingProtocol: 'imap', // imap | pop3
+        incomingHost: 'imap.gmail.com',
+        incomingPort: '993',
+        incomingEncryption: 'ssl'
     });
     
-    // Test Email State
     const [testEmail, setTestEmail] = useState('');
     const [isTesting, setIsTesting] = useState(false);
 
     useEffect(() => {
         const stored = localStorage.getItem('email_config');
         if (stored) {
-            setEmailConfig(JSON.parse(stored));
+            const parsed = JSON.parse(stored);
+            // Default value for migration
+            if (!parsed.incomingProtocol) {
+                parsed.incomingProtocol = 'imap';
+                parsed.incomingHost = parsed.service === 'gmail' ? 'imap.gmail.com' : '';
+                parsed.incomingPort = parsed.service === 'gmail' ? '993' : '';
+                parsed.incomingEncryption = 'ssl';
+            }
+            setEmailConfig(parsed);
         }
     }, []);
 
@@ -39,11 +53,28 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         if (!emailConfig.email || !emailConfig.appPassword) return alert("Vui lòng cấu hình Email gửi đi và Mật khẩu ứng dụng trước.");
         
         setIsTesting(true);
-        // Simulate SMTP Network Delay
         setTimeout(() => {
             setIsTesting(false);
-            alert(`[SIMULATION] Đã gửi email test thành công đến: ${testEmail}\n\nNội dung: Đây là email kiểm tra kết nối từ hệ thống VNPT Task Manager.`);
+            alert(`[SIMULATION]\nSMTP: ${emailConfig.host}:${emailConfig.port} (${emailConfig.encryption.toUpperCase()})\nIncoming: ${emailConfig.incomingHost}:${emailConfig.incomingPort} (${emailConfig.incomingProtocol.toUpperCase()})\n\nĐã gửi email test thành công đến: ${testEmail}`);
         }, 2000);
+    };
+
+    const updateServiceDefaults = (service: string) => {
+        if (service === 'gmail') {
+            setEmailConfig(prev => ({
+                ...prev,
+                service: 'gmail',
+                host: 'smtp.gmail.com',
+                port: '587',
+                encryption: 'starttls',
+                incomingProtocol: 'imap',
+                incomingHost: 'imap.gmail.com',
+                incomingPort: '993',
+                incomingEncryption: 'ssl'
+            }));
+        } else {
+            setEmailConfig(prev => ({ ...prev, service: 'smtp' }));
+        }
     };
 
     if (currentUser.hrmCode !== 'ADMIN' && !currentUser.canManageUsers) {
@@ -51,82 +82,119 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     }
 
     return (
-        <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
+        <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
             <h2 className="text-2xl font-bold text-slate-800">Cài đặt hệ thống</h2>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="p-4 border-b bg-slate-50 flex items-center gap-2">
                     <Mail className="text-blue-600" />
-                    <h3 className="font-bold text-slate-700">Cấu hình Gửi Email (SMTP)</h3>
+                    <h3 className="font-bold text-slate-700">Cấu hình Email Server</h3>
                 </div>
                 
-                <div className="p-6 space-y-4">
+                <div className="p-6 space-y-6">
                     <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 flex gap-3 items-start">
                         <AlertCircle className="text-blue-600 shrink-0 mt-0.5" size={20}/>
                         <div className="text-sm text-blue-800">
                             <p className="font-bold mb-1">Lưu ý bảo mật:</p>
                             <ul className="list-disc pl-5 space-y-1">
                                 <li>Với Gmail, bắt buộc bật <strong>Xác thực 2 bước</strong> và tạo <strong>Mật khẩu ứng dụng (App Password)</strong>.</li>
-                                <li>Cổng mặc định Gmail là 587 (TLS) hoặc 465 (SSL).</li>
                             </ul>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="col-span-1 md:col-span-2">
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Dịch vụ</label>
-                            <select 
-                                className="w-full border rounded-lg p-2.5 bg-slate-50"
-                                value={emailConfig.service}
-                                onChange={e => {
-                                    const val = e.target.value;
-                                    setEmailConfig(prev => ({
-                                        ...prev, 
-                                        service: val,
-                                        host: val === 'gmail' ? 'smtp.gmail.com' : prev.host,
-                                        port: val === 'gmail' ? '587' : prev.port
-                                    }));
-                                }}
-                            >
-                                <option value="gmail">Google Gmail (Mặc định)</option>
-                                <option value="smtp">Custom SMTP Server</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">SMTP Host</label>
-                            <div className="relative">
-                                <input type="text" className="w-full border rounded-lg p-2.5 pl-9" value={emailConfig.host} onChange={e => setEmailConfig({...emailConfig, host: e.target.value})} />
-                                <Server className="absolute left-3 top-3 text-slate-400" size={16}/>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Port</label>
-                                <input type="text" className="w-full border rounded-lg p-2.5" value={emailConfig.port} onChange={e => setEmailConfig({...emailConfig, port: e.target.value})} />
-                            </div>
-                            <div className="flex items-center pt-6">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" className="w-4 h-4 text-blue-600" checked={emailConfig.secure} onChange={e => setEmailConfig({...emailConfig, secure: e.target.checked})}/>
-                                    <span className="text-sm text-slate-700 font-medium">Use SSL/TLS</span>
-                                </label>
-                            </div>
-                        </div>
+                    {/* Service Selection */}
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Dịch vụ Email</label>
+                        <select 
+                            className="w-full md:w-1/2 border rounded-lg p-2.5 bg-slate-50 font-medium text-slate-700"
+                            value={emailConfig.service}
+                            onChange={e => updateServiceDefaults(e.target.value)}
+                        >
+                            <option value="gmail">Google Gmail (Mặc định)</option>
+                            <option value="smtp">Custom Mail Server</option>
+                        </select>
+                    </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Email gửi đi (User)</label>
+                    {/* Credentials (Common) */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6 border-b border-slate-100">
+                         <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Email / Username</label>
                             <input type="email" className="w-full border rounded-lg p-2.5" placeholder="admin@gmail.com" value={emailConfig.email} onChange={e => setEmailConfig({...emailConfig, email: e.target.value})} />
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Tên hiển thị</label>
+                        <div className="relative">
+                             <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu ứng dụng (App Password)</label>
+                            <input type="password" className="w-full border rounded-lg p-2.5 pr-10" placeholder="xxxx xxxx xxxx xxxx" value={emailConfig.appPassword} onChange={e => setEmailConfig({...emailConfig, appPassword: e.target.value})} />
+                            <div className="absolute right-3 top-9 text-slate-400"><Shield size={18}/></div>
+                        </div>
+                         <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Tên hiển thị gửi đi</label>
                             <input type="text" className="w-full border rounded-lg p-2.5" placeholder="VNPT Task Manager" value={emailConfig.senderName} onChange={e => setEmailConfig({...emailConfig, senderName: e.target.value})} />
                         </div>
+                    </div>
 
-                        <div className="col-span-1 md:col-span-2">
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu ứng dụng (App Password)</label>
-                            <div className="relative">
-                                <input type="password" className="w-full border rounded-lg p-2.5 pr-10" placeholder="xxxx xxxx xxxx xxxx" value={emailConfig.appPassword} onChange={e => setEmailConfig({...emailConfig, appPassword: e.target.value})} />
-                                <div className="absolute right-3 top-3 text-slate-400"><Shield size={18}/></div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {/* COLUMN 1: OUTGOING (SMTP) */}
+                        <div className="space-y-4">
+                            <h4 className="font-bold text-slate-700 flex items-center gap-2 border-b pb-2"><ArrowUpCircle className="text-green-600" size={18}/> Outgoing Server (SMTP)</h4>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">SMTP Host</label>
+                                <div className="relative">
+                                    <input type="text" className="w-full border rounded-lg p-2.5 pl-9" value={emailConfig.host} onChange={e => setEmailConfig({...emailConfig, host: e.target.value})} />
+                                    <Server className="absolute left-3 top-2.5 text-slate-400" size={16}/>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Port</label>
+                                    <input type="text" className="w-full border rounded-lg p-2.5" value={emailConfig.port} onChange={e => setEmailConfig({...emailConfig, port: e.target.value})} />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Encryption</label>
+                                    <select className="w-full border rounded-lg p-2.5" value={emailConfig.encryption} onChange={e => setEmailConfig({...emailConfig, encryption: e.target.value})}>
+                                        <option value="none">None</option>
+                                        <option value="ssl">SSL/TLS</option>
+                                        <option value="starttls">STARTTLS</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* COLUMN 2: INCOMING (POP3/IMAP) */}
+                        <div className="space-y-4">
+                            <h4 className="font-bold text-slate-700 flex items-center gap-2 border-b pb-2"><ArrowDownCircle className="text-blue-600" size={18}/> Incoming Server</h4>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Giao thức</label>
+                                <div className="flex gap-4 mt-2">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="protocol" value="imap" checked={emailConfig.incomingProtocol === 'imap'} onChange={() => setEmailConfig({...emailConfig, incomingProtocol: 'imap', incomingPort: '993'})} />
+                                        <span className="text-sm">IMAP</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="protocol" value="pop3" checked={emailConfig.incomingProtocol === 'pop3'} onChange={() => setEmailConfig({...emailConfig, incomingProtocol: 'pop3', incomingPort: '995'})} />
+                                        <span className="text-sm">POP3</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Host ({emailConfig.incomingProtocol.toUpperCase()})</label>
+                                <div className="relative">
+                                    <input type="text" className="w-full border rounded-lg p-2.5 pl-9" value={emailConfig.incomingHost} onChange={e => setEmailConfig({...emailConfig, incomingHost: e.target.value})} />
+                                    <Server className="absolute left-3 top-2.5 text-slate-400" size={16}/>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Port</label>
+                                    <input type="text" className="w-full border rounded-lg p-2.5" value={emailConfig.incomingPort} onChange={e => setEmailConfig({...emailConfig, incomingPort: e.target.value})} />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Encryption</label>
+                                    <select className="w-full border rounded-lg p-2.5" value={emailConfig.incomingEncryption} onChange={e => setEmailConfig({...emailConfig, incomingEncryption: e.target.value})}>
+                                        <option value="none">None</option>
+                                        <option value="ssl">SSL/TLS</option>
+                                        <option value="starttls">STARTTLS</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
                     </div>

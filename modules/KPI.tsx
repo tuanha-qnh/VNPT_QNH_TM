@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Unit, KPIData, GroupKPIData, KPI_KEYS, KPIKey, Role } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft, Users } from 'lucide-react';
+import { Download, FileUp, Filter, AlertOctagon, FileSpreadsheet, ClipboardPaste, Save, RefreshCw, Link, Check, Database, ArrowRightLeft, Users, Settings as SettingsIcon, Trash2, Edit, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { loadData, saveData } from '../utils/mockData';
 
@@ -54,14 +54,19 @@ const generateGroupKPI = (units: Unit[]): GroupKPIData[] => {
 };
 
 const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
-  const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config'>('eval'); 
+  const [activeTab, setActiveTab] = useState<'plan' | 'eval' | 'config' | 'manage'>('eval'); 
   const [filterUnit, setFilterUnit] = useState<string>('all');
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
   const [pasteModalOpen, setPasteModalOpen] = useState(false);
   const [pasteContent, setPasteContent] = useState('');
   
+  // Edit State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+
   // State for KPI Data (Generic type based on mode)
   const [kpiData, setKpiData] = useState<any[]>([]);
+  const [isDataLoaded, setIsDataLoaded] = useState(false); // Flag to track if data is loaded from storage
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // State for Google Sheet Config
@@ -92,30 +97,46 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   useEffect(() => {
     // Check permission for group mode
     if (mode === 'group' && !canViewGroup) {
+        setIsDataLoaded(true);
         return;
     }
 
-    const savedData = loadData<any[]>(DATA_STORAGE_KEY, []);
-    if (savedData.length > 0) {
-        setKpiData(savedData);
+    const storedData = localStorage.getItem(DATA_STORAGE_KEY);
+    
+    if (storedData) {
+        try {
+            const parsed = JSON.parse(storedData);
+            setKpiData(parsed);
+        } catch (e) {
+            console.error("Error parsing KPI data", e);
+            const initial = mode === 'personal' ? generateKPI(users) : generateGroupKPI(units);
+            setKpiData(initial);
+        }
     } else {
+        // Only generate initial mock data if nothing is in storage (First run)
         const initial = mode === 'personal' ? generateKPI(users) : generateGroupKPI(units);
         setKpiData(initial);
-        saveData(DATA_STORAGE_KEY, initial);
     }
-
+    
+    // Config
     const savedConfig = loadData<DataSourceConfig>(CONFIG_STORAGE_KEY, { url: '', lastSync: '', mapping: {} });
     setDsConfig(savedConfig);
+    
+    setIsDataLoaded(true);
   }, [users, units, mode]);
 
-  // Save whenever data changes
+  // Save whenever data changes (Only after loaded)
   useEffect(() => {
-      if (kpiData.length > 0) saveData(DATA_STORAGE_KEY, kpiData);
-  }, [kpiData]);
+      if (isDataLoaded) {
+          saveData(DATA_STORAGE_KEY, kpiData);
+      }
+  }, [kpiData, isDataLoaded, mode]);
 
   useEffect(() => {
-      saveData(CONFIG_STORAGE_KEY, dsConfig);
-  }, [dsConfig]);
+      if (isDataLoaded) {
+          saveData(CONFIG_STORAGE_KEY, dsConfig);
+      }
+  }, [dsConfig, isDataLoaded]);
 
   // Permission Guard
   if (mode === 'group' && !canViewGroup) {
@@ -351,6 +372,44 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
      setPasteContent('');
   };
 
+  // --- ADMIN MANAGEMENT LOGIC ---
+  const handleDeleteItem = (index: number) => {
+      if (!confirm("Bạn có chắc chắn muốn xóa bộ chỉ số này không?")) return;
+      const newData = [...kpiData];
+      newData.splice(index, 1);
+      setKpiData(newData);
+  };
+
+  const openEditModal = (item: any) => {
+      setEditingItem(JSON.parse(JSON.stringify(item))); // Deep copy
+      setIsEditModalOpen(true);
+  };
+
+  const handleSaveEdit = () => {
+      if (!editingItem) return;
+      const newData = kpiData.map(item => {
+          const itemId = mode === 'personal' ? item.hrmCode : item.unitCode;
+          const editId = mode === 'personal' ? editingItem.hrmCode : editingItem.unitCode;
+          return itemId === editId ? editingItem : item;
+      });
+      setKpiData(newData);
+      setIsEditModalOpen(false);
+      setEditingItem(null);
+  };
+
+  const updateEditingTarget = (key: string, field: 'target' | 'actual', value: string) => {
+      setEditingItem((prev: any) => ({
+          ...prev,
+          targets: {
+              ...prev.targets,
+              [key]: {
+                  ...prev.targets[key],
+                  [field]: Number(value)
+              }
+          }
+      }));
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
        <div className="flex flex-col md:flex-row justify-between items-end gap-4">
@@ -365,11 +424,14 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           </div>
           <div className="flex bg-slate-200 p-1 rounded-lg">
             <button onClick={() => setActiveTab('eval')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Đánh giá</button>
-            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu (Excel)</button>
+            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'plan' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Nhập liệu</button>
             
-            {/* ADMIN CAN CONFIG */}
+            {/* ADMIN CAN CONFIG & MANAGE */}
             {isAdmin && (
-                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Cấu hình (Google Sheet)</button>
+                <>
+                    <button onClick={() => setActiveTab('manage')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'manage' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}>Quản lý</button>
+                    <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600'}`}><SettingsIcon size={16}/></button>
+                </>
             )}
           </div>
        </div>
@@ -436,6 +498,48 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                        {isSyncing ? <RefreshCw className="animate-spin" size={20}/> : <RefreshCw size={20}/>}
                        Lưu cấu hình & Đồng bộ
                    </button>
+               </div>
+           </div>
+       )}
+
+       {/* --- MANAGE TAB (ADMIN ONLY) --- */}
+       {activeTab === 'manage' && isAdmin && (
+           <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+               <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                   <h3 className="font-bold text-slate-800">Quản lý dữ liệu KPI</h3>
+                   <div className="text-xs text-slate-500">Tổng số: {kpiData.length} bản ghi</div>
+               </div>
+               <div className="overflow-x-auto">
+                   <table className="w-full text-sm text-left">
+                       <thead className="bg-slate-100 text-slate-700 font-bold">
+                           <tr>
+                               <th className="p-3">ID</th>
+                               <th className="p-3">Tên đối tượng</th>
+                               <th className="p-3 text-center">Số lượng chỉ tiêu</th>
+                               <th className="p-3 text-right">Hành động</th>
+                           </tr>
+                       </thead>
+                       <tbody className="divide-y divide-slate-100">
+                           {kpiData.length > 0 ? kpiData.map((item, index) => {
+                               const id = mode === 'personal' ? item.hrmCode : item.unitCode;
+                               const name = mode === 'personal' ? item.fullName : item.unitName;
+                               const targetCount = Object.keys(item.targets || {}).length;
+                               return (
+                                   <tr key={index} className="hover:bg-slate-50">
+                                       <td className="p-3 font-mono text-xs">{id}</td>
+                                       <td className="p-3 font-medium">{name}</td>
+                                       <td className="p-3 text-center">{targetCount}</td>
+                                       <td className="p-3 text-right flex justify-end gap-2">
+                                           <button onClick={() => openEditModal(item)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded"><Edit size={16}/></button>
+                                           <button onClick={() => handleDeleteItem(index)} className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded"><Trash2 size={16}/></button>
+                                       </td>
+                                   </tr>
+                               );
+                           }) : (
+                               <tr><td colSpan={4} className="p-8 text-center text-slate-400">Chưa có dữ liệu nào.</td></tr>
+                           )}
+                       </tbody>
+                   </table>
                </div>
            </div>
        )}
@@ -585,6 +689,45 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                </div>
             </div>
          </div>
+       )}
+
+       {/* Edit KPI Modal */}
+       {isEditModalOpen && editingItem && (
+           <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+               <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl overflow-hidden animate-fade-in max-h-[90vh] flex flex-col">
+                   <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                       <h3 className="font-bold text-lg">Cập nhật số liệu: {mode === 'personal' ? editingItem.fullName : editingItem.unitName}</h3>
+                       <button onClick={() => setIsEditModalOpen(false)}><X size={20}/></button>
+                   </div>
+                   <div className="p-4 flex-1 overflow-y-auto">
+                       <table className="w-full text-sm">
+                           <thead className="bg-slate-100 font-bold sticky top-0">
+                               <tr>
+                                   <th className="p-2 text-left">Chỉ tiêu</th>
+                                   <th className="p-2 w-32">Kế hoạch</th>
+                                   <th className="p-2 w-32">Thực hiện</th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y">
+                               {Object.entries(KPI_KEYS).map(([key, label]) => {
+                                   const t = editingItem.targets[key] || { target: 0, actual: 0 };
+                                   return (
+                                       <tr key={key}>
+                                           <td className="p-2">{label}</td>
+                                           <td className="p-2"><input type="number" className="w-full border rounded p-1" value={t.target} onChange={e => updateEditingTarget(key, 'target', e.target.value)} /></td>
+                                           <td className="p-2"><input type="number" className="w-full border rounded p-1 text-blue-700 font-bold" value={t.actual} onChange={e => updateEditingTarget(key, 'actual', e.target.value)} /></td>
+                                       </tr>
+                                   )
+                               })}
+                           </tbody>
+                       </table>
+                   </div>
+                   <div className="p-4 border-t flex justify-end gap-3 bg-slate-50">
+                       <button onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-600">Hủy</button>
+                       <button onClick={handleSaveEdit} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Lưu thay đổi</button>
+                   </div>
+               </div>
+           </div>
        )}
 
        {/* Paste Data Modal */}
