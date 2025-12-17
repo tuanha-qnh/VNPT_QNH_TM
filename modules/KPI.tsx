@@ -745,16 +745,21 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                    <h3 className="font-bold text-slate-800">Chi tiết số liệu: {KPI_KEYS[filterKey]}</h3>
                    <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">Key: {filterKey}</span>
                </div>
-               <div className="overflow-x-auto">
+               {/* 
+                  YÊU CẦU: Hiển thị tối đa 10 dòng, có thanh cuộn đứng.
+                  Giải pháp: set max-height ~ 500px (mỗi dòng ~ 50px) và overflow-y-auto
+                  Thêm sticky cho thead để khi cuộn vẫn thấy tiêu đề.
+               */}
+               <div className="overflow-x-auto max-h-[500px] overflow-y-auto relative">
                  <table className="w-full text-sm text-left">
-                   <thead className="bg-slate-100 text-slate-700 font-bold">
+                   <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 shadow-sm">
                      <tr>
-                       <th className="p-3">{mode === 'personal' ? 'Nhân viên' : 'Đơn vị'}</th>
-                       <th className="p-3">Mã</th>
-                       <th className="p-3 text-right">Kế hoạch (Target)</th>
-                       <th className="p-3 text-right">Thực hiện (Actual)</th>
-                       <th className="p-3 text-center">% Hoàn thành</th>
-                       <th className="p-3 text-center">Đánh giá</th>
+                       <th className="p-3 bg-slate-100">{mode === 'personal' ? 'Nhân viên' : 'Đơn vị'}</th>
+                       <th className="p-3 bg-slate-100">Mã</th>
+                       <th className="p-3 bg-slate-100 text-right">Kế hoạch (Target)</th>
+                       <th className="p-3 bg-slate-100 text-right">Thực hiện (Actual)</th>
+                       <th className="p-3 bg-slate-100 text-center">% Hoàn thành</th>
+                       <th className="p-3 bg-slate-100 text-center">Đánh giá</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-100">

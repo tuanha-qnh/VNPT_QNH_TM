@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { Unit, User, Role } from '../types';
-import { Plus, Edit2, Trash2, Building, User as UserIcon, Save, X, ChevronRight, ChevronDown, RefreshCcw, FileUp, Download, FileSpreadsheet, ShieldCheck, Loader2, FolderInput } from 'lucide-react';
+import { Plus, Edit2, Trash2, Building, User as UserIcon, Save, X, ChevronRight, ChevronDown, RefreshCcw, FileUp, Download, FileSpreadsheet, ShieldCheck, Loader2, FolderInput, Filter } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../utils/supabaseClient'; 
 import md5 from 'md5'; 
@@ -23,6 +23,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
   const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
   const [unitToMove, setUnitToMove] = useState<Unit | null>(null);
   const [targetParentId, setTargetParentId] = useState<string>('');
+  
+  // New: Filter User State
+  const [filterUserUnit, setFilterUserUnit] = useState<string>('all');
 
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
@@ -57,6 +60,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       const visibleUnitIds = visibleUnits.map(u => u.id);
       return users.filter(u => visibleUnitIds.includes(u.unitId));
   }, [users, visibleUnits]);
+  
+  // NEW: Filter Logic for Users
+  const filteredUsers = useMemo(() => {
+      let result = visibleUsers;
+      if (filterUserUnit !== 'all') {
+          result = result.filter(u => u.unitId === filterUserUnit);
+      }
+      return result;
+  }, [visibleUsers, filterUserUnit]);
 
   const toggleExpand = (unitId: string) => {
     setExpandedUnits(prev => prev.includes(unitId) ? prev.filter(id => id !== unitId) : [...prev, unitId]);
@@ -351,12 +363,30 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 min-h-[500px]">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+        <div className="p-4 border-b border-slate-100 flex flex-wrap justify-between items-center bg-slate-50 gap-2">
            <h3 className="font-semibold text-slate-700 flex items-center gap-2">
              {activeTab === 'units' ? <Building size={18} /> : <UserIcon size={18} />}
              Danh sách {activeTab === 'units' ? 'Đơn vị (Sơ đồ cây)' : 'Nhân sự'}
            </h3>
-           <div className="flex gap-2">
+           
+           <div className="flex items-center gap-2">
+                {/* NEW: Filter User By Unit */}
+                {activeTab === 'users' && (
+                    <div className="flex items-center gap-2 mr-2">
+                        <div className="text-sm text-slate-500 font-medium flex items-center gap-1"><Filter size={14}/> Lọc:</div>
+                        <select 
+                            className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-blue-500"
+                            value={filterUserUnit}
+                            onChange={(e) => setFilterUserUnit(e.target.value)}
+                        >
+                            <option value="all">-- Tất cả đơn vị --</option>
+                            {visibleUnits.map(u => (
+                                <option key={u.id} value={u.id}>{u.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
                 {activeTab === 'users' && (
                     <button onClick={() => setIsImportModalOpen(true)} className="bg-white border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
                         <FileUp size={16} /> Import Excel
@@ -388,7 +418,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {visibleUsers.map(user => (
+                      {filteredUsers.map(user => (
                         <tr key={user.id} className="hover:bg-slate-50/80">
                           <td className="px-4 py-3">{user.hrmCode}</td>
                           <td className="px-4 py-3"><div className="font-medium text-slate-900">{user.fullName}</div></td>
@@ -403,6 +433,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                           </td>
                         </tr>
                       ))}
+                      {filteredUsers.length === 0 && (
+                          <tr><td colSpan={7} className="text-center p-8 text-slate-400">Không tìm thấy nhân sự nào.</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
