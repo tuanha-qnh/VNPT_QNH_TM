@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2, Lock, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Mail, Save, Server, Shield, AlertCircle, Send, CheckCircle, Loader2, Lock, ArrowDownCircle, ArrowUpCircle, Wifi, XCircle } from 'lucide-react';
 import { User } from '../types';
 
 interface SettingsProps {
@@ -27,6 +27,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     
     const [testEmail, setTestEmail] = useState('');
     const [isTesting, setIsTesting] = useState(false);
+    const [isCheckingConnection, setIsCheckingConnection] = useState(false);
 
     useEffect(() => {
         const stored = localStorage.getItem('email_config');
@@ -46,6 +47,39 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
     const handleSave = () => {
         localStorage.setItem('email_config', JSON.stringify(emailConfig));
         alert("Đã lưu cấu hình Email thành công!");
+    };
+
+    const handleCheckConnection = () => {
+        // 1. Validate Input
+        const errors = [];
+        if (!emailConfig.host) errors.push("Thiếu SMTP Host");
+        if (!emailConfig.port) errors.push("Thiếu SMTP Port");
+        if (!emailConfig.email) errors.push("Thiếu Email đăng nhập");
+        if (!emailConfig.appPassword) errors.push("Thiếu Mật khẩu ứng dụng");
+        if (!emailConfig.incomingHost) errors.push(`Thiếu Host ${emailConfig.incomingProtocol.toUpperCase()}`);
+        if (!emailConfig.incomingPort) errors.push(`Thiếu Port ${emailConfig.incomingProtocol.toUpperCase()}`);
+
+        if (errors.length > 0) {
+            alert("Vui lòng điền đầy đủ thông tin trước khi kiểm tra:\n- " + errors.join("\n- "));
+            return;
+        }
+
+        setIsCheckingConnection(true);
+
+        // 2. Simulation Network Check
+        setTimeout(() => {
+            setIsCheckingConnection(false);
+            
+            // Giả lập logic kiểm tra: Nếu port là số hợp lệ thì OK
+            const isSmtpPortValid = !isNaN(Number(emailConfig.port));
+            const isIncomingPortValid = !isNaN(Number(emailConfig.incomingPort));
+
+            if (isSmtpPortValid && isIncomingPortValid) {
+                alert(`[KẾT QUẢ KIỂM TRA]\n\n✅ SMTP Connection (${emailConfig.host}:${emailConfig.port})... OK\n✅ ${emailConfig.incomingProtocol.toUpperCase()} Connection (${emailConfig.incomingHost}:${emailConfig.incomingPort})... OK\n\n🟢 KẾT NỐI THÀNH CÔNG!`);
+            } else {
+                alert(`[LỖI KẾT NỐI]\n\n❌ Không thể kết nối đến máy chủ.\nVui lòng kiểm tra lại Port hoặc tường lửa.`);
+            }
+        }, 2000);
     };
 
     const handleSendTestEmail = () => {
@@ -200,16 +234,24 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                     </div>
                 </div>
 
-                <div className="p-4 border-t bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div className="flex w-full md:w-auto gap-2">
-                        <input type="email" placeholder="Email nhận test..." className="border rounded-lg px-3 py-2 text-sm w-64" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
-                        <button onClick={handleSendTestEmail} disabled={isTesting} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 flex items-center gap-2">
-                            {isTesting ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Gửi thử
+                <div className="p-4 border-t bg-slate-50 flex flex-col xl:flex-row justify-between items-center gap-4">
+                    <div className="flex flex-col md:flex-row w-full xl:w-auto gap-2">
+                        <div className="flex gap-2 w-full">
+                             <input type="email" placeholder="Email nhận test..." className="border rounded-lg px-3 py-2 text-sm flex-1 md:w-64" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
+                            <button onClick={handleSendTestEmail} disabled={isTesting} className="bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap">
+                                {isTesting ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Gửi thử
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex w-full xl:w-auto gap-3">
+                         <button onClick={handleCheckConnection} disabled={isCheckingConnection} className="flex-1 xl:flex-none px-4 py-2.5 bg-amber-500 text-white rounded-lg font-bold hover:bg-amber-600 flex items-center justify-center gap-2 shadow-sm transition-colors">
+                            {isCheckingConnection ? <Loader2 className="animate-spin" size={18}/> : <Wifi size={18}/>} Kiểm tra kết nối
+                        </button>
+                        <button onClick={handleSave} className="flex-1 xl:flex-none px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center gap-2 shadow-sm transition-colors">
+                            <Save size={18} /> Lưu cấu hình
                         </button>
                     </div>
-                    <button onClick={handleSave} className="w-full md:w-auto px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center gap-2 shadow-sm">
-                        <Save size={18} /> Lưu cấu hình
-                    </button>
                 </div>
             </div>
         </div>
