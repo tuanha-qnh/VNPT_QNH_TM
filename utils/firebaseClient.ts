@@ -6,17 +6,27 @@ import { getFirestore, collection, doc, setDoc, getDocs, updateDoc, deleteDoc, q
 // Bạn hãy tạo 1 Project tại: https://console.firebase.google.com/
 // Sau đó Copy cấu hình của bạn vào đây. 
 // Firestore có gói MIỄN PHÍ VĨNH VIỄN (Spark Plan) rất tốt cho dự án này.
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyAs-Fake-Key-For-Setup",
-  authDomain: "vnpt-qn-task.firebaseapp.com",
-  projectId: "vnpt-qn-task",
-  storageBucket: "vnpt-qn-task.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef123456"
+  apiKey: "AIzaSyAdNg-BYCKVyIXmwJVpKAVhJuK4RrMrDG8",
+  authDomain: "dhkd-task-manager.firebaseapp.com",
+  projectId: "dhkd-task-manager",
+  storageBucket: "dhkd-task-manager.firebasestorage.app",
+  messagingSenderId: "1068491178770",
+  appId: "1:1068491178770:web:1327d65223772d5e9ce9cb",
+  measurementId: "G-F0X5S2NXS7"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+const analytics = getAnalytics(app);
 
 // Các helper function để thao tác dữ liệu giống như một Database thực thụ
 export const dbClient = {
