@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [kpis, setKpis] = useState<any[]>([]);
 
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
@@ -38,10 +39,11 @@ const App: React.FC = () => {
       else setIsRefreshing(true);
       
       try {
-          const [unitsData, usersData, tasksData] = await Promise.all([
+          const [unitsData, usersData, tasksData, kpisData] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
-              dbClient.getAll('tasks')
+              dbClient.getAll('tasks'),
+              dbClient.getAll('kpis')
           ]);
 
           const mappedUnits: Unit[] = (unitsData as any[]).map(u => ({
@@ -79,6 +81,7 @@ const App: React.FC = () => {
           setUnits(mappedUnits);
           setUsers(mappedUsers);
           setTasks(mappedTasks);
+          setKpis(kpisData || []);
 
           // Cập nhật lại session user nếu đang login để đồng bộ mật khẩu mới nhất
           const stored = localStorage.getItem('vnpt_user_session');
@@ -144,7 +147,6 @@ const App: React.FC = () => {
       e.preventDefault();
       const hashedInput = md5(loginPassword);
       
-      // Tìm user khớp username và khớp mật khẩu (dạng MD5 hoặc Plaintext để an toàn nhất)
       const user = users.find(u => 
         u.username === loginUsername && 
         (u.password === hashedInput || u.password === loginPassword)
@@ -159,17 +161,16 @@ const App: React.FC = () => {
   };
 
   const renderModule = () => {
-    // Không unmount module khi đang refresh, chỉ unmount khi load lần đầu
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     
     switch (activeModule) {
-      case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
+      case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} groupKpi={kpis} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
-      default: return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
+      default: return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} groupKpi={kpis} />;
     }
   };
 
