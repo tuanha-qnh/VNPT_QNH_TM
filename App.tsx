@@ -6,7 +6,7 @@ import Admin from './modules/Admin';
 import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
-import { dbClient } from './utils/supabaseClient'; 
+import { dbClient } from './utils/firebaseClient'; // Đổi sang Firebase
 import { Task, Unit, User, Role, TaskStatus, TaskPriority } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw } from 'lucide-react';
 import md5 from 'md5'; 
@@ -17,12 +17,7 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [isInitialLoading, setIsInitialLoading] = useState(true); 
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  // Lưu activeModule vào localStorage
-  const [activeModule, setActiveModule] = useState(() => {
-    return localStorage.getItem('vnpt_active_module') || 'dashboard';
-  });
-  
+  const [activeModule, setActiveModule] = useState(() => localStorage.getItem('vnpt_active_module') || 'dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -46,55 +41,22 @@ const App: React.FC = () => {
               dbClient.getAll('kpis')
           ]);
 
-          const mappedUnits: Unit[] = (unitsData as any[]).map(u => ({
-              id: u.id, 
-              code: u.code, 
-              name: u.name, 
-              parentId: u.parent_id || null,
-              managerIds: u.manager_ids || [], 
-              level: u.level || 0
-          })).sort((a, b) => (a.level || 0) - (b.level || 0));
-
-          const mappedUsers: User[] = (usersData as any[]).map(u => ({
-              id: u.id, 
-              hrmCode: u.hrm_code, 
-              fullName: u.full_name, 
-              email: u.email || '', 
-              username: u.username, 
-              password: u.password, 
-              title: u.title, 
-              unitId: u.unit_id, 
-              isFirstLogin: u.is_first_login, 
-              canManageUsers: u.can_manage, 
-              avatar: u.avatar || ''
-          }));
-
-          const mappedTasks: Task[] = (tasksData as any[]).map(t => ({
-              id: t.id, name: t.name, content: t.content, status: t.status as TaskStatus, 
-              priority: t.priority as TaskPriority, progress: t.progress || 0, deadline: t.deadline, 
-              assignerId: t.assigner_id,
-              primaryAssigneeIds: t.primary_ids || [], 
-              supportAssigneeIds: t.support_ids || [],
-              type: t.type || 'Single', createdAt: t.created_at
-          }));
-          
-          setUnits(mappedUnits);
-          setUsers(mappedUsers);
-          setTasks(mappedTasks);
+          setUnits(unitsData as Unit[]);
+          setUsers(usersData as User[]);
+          setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
 
-          // Cập nhật lại session user nếu đang login để đồng bộ mật khẩu mới nhất
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
               const parsed = JSON.parse(stored);
-              const updated = mappedUsers.find(u => u.id === parsed.id);
+              const updated = (usersData as User[]).find(u => u.id === parsed.id);
               if (updated) {
                   setCurrentUser(updated);
                   localStorage.setItem('vnpt_user_session', JSON.stringify(updated));
               }
           }
       } catch (error) {
-          console.error("Lỗi tải dữ liệu từ Cloud:", error);
+          console.error("Lỗi tải dữ liệu từ Firebase:", error);
       } finally {
           setIsInitialLoading(false);
           setIsRefreshing(false);
@@ -104,11 +66,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const storedUser = localStorage.getItem('vnpt_user_session');
     if (storedUser) {
-        try {
-            setCurrentUser(JSON.parse(storedUser));
-        } catch (e) {
-            localStorage.removeItem('vnpt_user_session');
-        }
+        try { setCurrentUser(JSON.parse(storedUser)); } catch (e) { localStorage.removeItem('vnpt_user_session'); }
     }
     fetchInitialData();
   }, [fetchInitialData]);
@@ -119,23 +77,24 @@ const App: React.FC = () => {
   };
 
   const handleInitializeSystem = async () => {
-    if (!confirm("Hệ thống sẽ khởi tạo dữ liệu gốc lên Supabase Cloud. Tiếp tục?")) return;
+    if (!confirm("Hệ thống sẽ khởi tạo dữ liệu gốc lên Firebase Cloud. Tiếp tục?")) return;
     setIsInitialLoading(true);
     try {
-        const rootId = '00000000-0000-0000-0000-000000000001';
+        const rootId = 'unit_root_qn';
+        const adminId = 'user_admin_root';
+
         await dbClient.upsert('units', rootId, { 
-            code: 'VNPT_QN', name: 'VNPT Quảng Ninh (Gốc)', level: 0, parent_id: null 
+            code: 'VNPT_QN', name: 'VNPT Quảng Ninh (Gốc)', level: 0, parentId: null 
         });
 
-        const adminId = '00000000-0000-0000-0000-000000000002';
         await dbClient.upsert('users', adminId, {
-            hrm_code: 'ADMIN', full_name: 'Quản Trị Viên', email: 'admin@vnpt.vn',
+            hrmCode: 'ADMIN', fullName: 'Quản Trị Viên', email: 'admin@vnpt.vn',
             username: 'admin', password: md5('123'), title: Role.DIRECTOR,
-            unit_id: rootId, is_first_login: false, can_manage: true
+            unitId: rootId, isFirstLogin: false, canManageUsers: true
         });
 
         await fetchInitialData();
-        alert("Khởi tạo Cloud Database thành công!\nĐăng nhập bằng: admin / 123");
+        alert("Khởi tạo Firebase Cloud Database thành công!\nĐăng nhập bằng: admin / 123");
     } catch (err: any) {
         alert("Lỗi khởi tạo: " + err.message);
     } finally {
@@ -146,12 +105,7 @@ const App: React.FC = () => {
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
       const hashedInput = md5(loginPassword);
-      
-      const user = users.find(u => 
-        u.username === loginUsername && 
-        (u.password === hashedInput || u.password === loginPassword)
-      );
-      
+      const user = users.find(u => u.username === loginUsername && (u.password === hashedInput || u.password === loginPassword));
       if (user) {
           setCurrentUser(user);
           localStorage.setItem('vnpt_user_session', JSON.stringify(user));
@@ -162,7 +116,6 @@ const App: React.FC = () => {
 
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
-    
     switch (activeModule) {
       case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} groupKpi={kpis} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={() => fetchInitialData(true)} />;
@@ -184,19 +137,16 @@ const App: React.FC = () => {
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.7</p>
+                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.8 (Firebase)</p>
                   </div>
-
                   {(users.length === 0 && !isInitialLoading) ? (
                       <div className="space-y-6 animate-fade-in">
                           <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 flex gap-3">
                              <ShieldAlert className="text-amber-500 shrink-0" size={20}/>
-                             <p className="text-xs text-amber-700 font-bold leading-relaxed text-center">
-                                Cơ sở dữ liệu trống. Vui lòng bấm để khởi tạo.
-                             </p>
+                             <p className="text-xs text-amber-700 font-bold leading-relaxed text-center">Firebase trống. Vui lòng bấm để khởi tạo.</p>
                           </div>
                           <button onClick={handleInitializeSystem} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all">
-                             <Database size={20}/> Khởi tạo Database Cloud
+                             <Database size={20}/> Khởi tạo Firebase Cloud
                           </button>
                       </div>
                    ) : (
