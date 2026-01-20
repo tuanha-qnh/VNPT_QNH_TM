@@ -13,7 +13,6 @@ export const dbClient = {
         return data || [];
     },
     async upsert(table: string, id: string, data: any) {
-        // Chỉ giữ lại các trường hợp lệ theo chuẩn snake_case của Postgres
         const cleanData: any = {};
         const validColumns: Record<string, string[]> = {
             'units': ['id', 'code', 'name', 'parent_id', 'manager_ids', 'address', 'phone', 'level'],
@@ -24,23 +23,39 @@ export const dbClient = {
         const allowed = validColumns[table] || [];
         
         Object.entries(data).forEach(([key, value]) => {
-            // Mapping ngược nếu lỡ truyền camelCase
             let targetKey = key;
+            // Ánh xạ camelCase sang snake_case
             if (key === 'hrmCode') targetKey = 'hrm_code';
             if (key === 'fullName') targetKey = 'full_name';
             if (key === 'unitId') targetKey = 'unit_id';
             if (key === 'isFirstLogin') targetKey = 'is_first_login';
             if (key === 'canManageUsers') targetKey = 'can_manage';
             
+            // Chỉ đưa vào cleanData nếu cột nằm trong danh sách cho phép
             if (allowed.includes(targetKey)) {
+                // Nếu là avatar và giá trị rỗng/null, tạm thời bỏ qua để tránh lỗi Schema Cache nếu cột chưa được tạo
+                if (targetKey === 'avatar' && !value) return;
+                
                 cleanData[targetKey] = value === undefined ? null : value;
             }
         });
         
-        const { error } = await supabase.from(table).upsert({ ...cleanData, id }, { onConflict: 'id' });
-        if (error) {
-            console.error(`Lỗi Upsert table ${table}:`, error);
-            throw error;
+        try {
+            const { error } = await supabase.from(table).upsert({ ...cleanData, id }, { onConflict: 'id' });
+            if (error) {
+                // Nếu lỗi liên quan đến avatar (cột không tồn tại trong cache), thử lại lần 2 không có avatar
+                if (error.message.includes('avatar') || error.code === '42703') {
+                    console.warn("Phát hiện lỗi cột avatar trong cache, đang thử lại không có avatar...");
+                    delete cleanData.avatar;
+                    const { error: retryError } = await supabase.from(table).upsert({ ...cleanData, id }, { onConflict: 'id' });
+                    if (retryError) throw retryError;
+                    return true;
+                }
+                throw error;
+            }
+        } catch (err) {
+            console.error(`Lỗi DB Upsert (${table}):`, err);
+            throw err;
         }
         return true;
     },

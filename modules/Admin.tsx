@@ -26,7 +26,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
 
   const isSystemAdmin = currentUser.username === 'admin';
 
-  // Helper: Lấy toàn bộ ID của các đơn vị con (decedants)
   const getDescendantUnitIds = (unitId: string): string[] => {
       let ids: string[] = [unitId];
       const children = units.filter(u => u.parentId === unitId);
@@ -36,14 +35,12 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return ids;
   };
 
-  // Lọc đơn vị hiển thị
   const visibleUnits = useMemo(() => {
       if (isSystemAdmin) return units;
       const myManageableIds = getDescendantUnitIds(currentUser.unitId);
       return units.filter(u => myManageableIds.includes(u.id));
   }, [units, isSystemAdmin, currentUser.unitId]);
 
-  // Lọc danh sách nhân sự có thể nhìn thấy (Toàn bộ người trong cây đơn vị quản lý)
   const visibleUsers = useMemo(() => {
       const manageableUnitIds = isSystemAdmin ? units.map(u => u.id) : getDescendantUnitIds(currentUser.unitId);
       let filtered = users.filter(u => manageableUnitIds.includes(u.unitId));
@@ -69,7 +66,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       return roots.map(root => ({ ...root, children: build(visibleUnits, root.id) }));
   }, [visibleUnits]);
 
-  // --- LOGIC DRAG & DROP ĐƠN VỊ ---
   const handleDragStart = (e: React.DragEvent, unitId: string) => {
       e.dataTransfer.setData("unitId", unitId);
   };
@@ -203,11 +199,20 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
         } else {
             const unitId = formData.unitId || formData.unit_id || (isSystemAdmin ? units[0]?.id : currentUser.unitId);
             
+            // Xử lý mật khẩu cẩn thận để tránh hash đè hash
+            let finalPassword = formData.password;
+            if (editingItem) {
+                if (formData.newPassword) finalPassword = md5(formData.newPassword);
+                else finalPassword = formData.password; // Giữ nguyên hash cũ
+            } else {
+                finalPassword = md5(formData.password || '123456');
+            }
+
             await dbClient.upsert('users', id, {
-                hrm_code: formData.hrmCode,
-                full_name: formData.fullName,
+                hrm_code: formData.hrmCode || formData.hrm_code,
+                full_name: formData.fullName || formData.full_name,
                 username: formData.username,
-                password: editingItem ? (formData.newPassword ? md5(formData.newPassword) : formData.password) : md5(formData.password || '123456'),
+                password: finalPassword,
                 title: formData.title,
                 unit_id: unitId,
                 email: formData.email || '', 
@@ -217,7 +222,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
             });
         }
         setIsModalOpen(false);
-        onRefresh(); // Làm mới dữ liệu thay vì reload toàn trang
+        onRefresh(); 
     } catch (err: any) {
         alert("Lỗi lưu Cloud: " + err.message);
     } finally {

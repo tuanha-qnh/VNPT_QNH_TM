@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './modules/Dashboard';
 import Admin from './modules/Admin';
@@ -8,14 +8,15 @@ import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import { dbClient } from './utils/supabaseClient'; 
 import { Task, Unit, User, Role, TaskStatus, TaskPriority } from './types';
-import { Search, LogOut, Loader2, Database, ShieldAlert } from 'lucide-react';
+import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw } from 'lucide-react';
 import md5 from 'md5'; 
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(true); 
+  const [isInitialLoading, setIsInitialLoading] = useState(true); 
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Lưu activeModule vào localStorage
   const [activeModule, setActiveModule] = useState(() => {
@@ -32,25 +33,10 @@ const App: React.FC = () => {
     localStorage.setItem('vnpt_active_module', activeModule);
   }, [activeModule]);
 
-  useEffect(() => {
-    const storedUser = localStorage.getItem('vnpt_user_session');
-    if (storedUser) {
-        try {
-            setCurrentUser(JSON.parse(storedUser));
-        } catch (e) {
-            localStorage.removeItem('vnpt_user_session');
-        }
-    }
-    fetchInitialData();
-  }, []);
-
-  const handleLogout = () => {
-      setCurrentUser(null);
-      localStorage.removeItem('vnpt_user_session');
-  };
-
-  const fetchInitialData = async () => {
-      setIsLoading(true);
+  const fetchInitialData = useCallback(async (isSilent = false) => {
+      if (!isSilent) setIsInitialLoading(true);
+      else setIsRefreshing(true);
+      
       try {
           const [unitsData, usersData, tasksData] = await Promise.all([
               dbClient.getAll('units'),
@@ -93,16 +79,45 @@ const App: React.FC = () => {
           setUnits(mappedUnits);
           setUsers(mappedUsers);
           setTasks(mappedTasks);
+
+          // Cập nhật lại session user nếu đang login để đồng bộ mật khẩu mới nhất
+          const stored = localStorage.getItem('vnpt_user_session');
+          if (stored) {
+              const parsed = JSON.parse(stored);
+              const updated = mappedUsers.find(u => u.id === parsed.id);
+              if (updated) {
+                  setCurrentUser(updated);
+                  localStorage.setItem('vnpt_user_session', JSON.stringify(updated));
+              }
+          }
       } catch (error) {
-          console.error("Lỗi tải dữ liệu từ Supabase:", error);
+          console.error("Lỗi tải dữ liệu từ Cloud:", error);
       } finally {
-          setIsLoading(false);
+          setIsInitialLoading(false);
+          setIsRefreshing(false);
       }
+  }, []);
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('vnpt_user_session');
+    if (storedUser) {
+        try {
+            setCurrentUser(JSON.parse(storedUser));
+        } catch (e) {
+            localStorage.removeItem('vnpt_user_session');
+        }
+    }
+    fetchInitialData();
+  }, [fetchInitialData]);
+
+  const handleLogout = () => {
+      setCurrentUser(null);
+      localStorage.removeItem('vnpt_user_session');
   };
 
   const handleInitializeSystem = async () => {
     if (!confirm("Hệ thống sẽ khởi tạo dữ liệu gốc lên Supabase Cloud. Tiếp tục?")) return;
-    setIsLoading(true);
+    setIsInitialLoading(true);
     try {
         const rootId = '00000000-0000-0000-0000-000000000001';
         await dbClient.upsert('units', rootId, { 
@@ -121,15 +136,19 @@ const App: React.FC = () => {
     } catch (err: any) {
         alert("Lỗi khởi tạo: " + err.message);
     } finally {
-        setIsLoading(false);
+        setIsInitialLoading(false);
     }
   };
 
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
       const hashedInput = md5(loginPassword);
-      // Tìm user khớp username và khớp mật khẩu (dạng MD5)
-      const user = users.find(u => u.username === loginUsername && (u.password === hashedInput || u.password === loginPassword));
+      
+      // Tìm user khớp username và khớp mật khẩu (dạng MD5 hoặc Plaintext để an toàn nhất)
+      const user = users.find(u => 
+        u.username === loginUsername && 
+        (u.password === hashedInput || u.password === loginPassword)
+      );
       
       if (user) {
           setCurrentUser(user);
@@ -140,14 +159,16 @@ const App: React.FC = () => {
   };
 
   const renderModule = () => {
-    if (isLoading) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-blue-600" size={48} /></div>;
+    // Không unmount module khi đang refresh, chỉ unmount khi load lần đầu
+    if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
+    
     switch (activeModule) {
       case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
-      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={fetchInitialData} />;
+      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
-      case 'settings': return <Settings currentUser={currentUser!} onRefresh={fetchInitialData} />;
+      case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       default: return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
     }
   };
@@ -162,10 +183,10 @@ const App: React.FC = () => {
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.6</p>
+                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.7</p>
                   </div>
 
-                  {(users.length === 0 && !isLoading) ? (
+                  {(users.length === 0 && !isInitialLoading) ? (
                       <div className="space-y-6 animate-fade-in">
                           <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 flex gap-3">
                              <ShieldAlert className="text-amber-500 shrink-0" size={20}/>
@@ -187,8 +208,8 @@ const App: React.FC = () => {
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label>
                               <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
                           </div>
-                          <button type="submit" disabled={isLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center">
-                             {isLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
+                          <button type="submit" disabled={isInitialLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center">
+                             {isInitialLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
                           </button>
                       </form>
                    )}
@@ -202,9 +223,12 @@ const App: React.FC = () => {
       <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} currentUser={currentUser} />
       <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-16'} flex flex-col`}>
         <header className="h-20 bg-white/80 backdrop-blur-md sticky top-0 border-b px-8 flex items-center justify-between z-40">
-           <div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200">
-             <Search size={18} className="text-slate-400 mr-2" />
-             <input type="text" placeholder="Tìm nhanh công việc, nhân sự..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" />
+           <div className="flex items-center gap-4">
+               {isRefreshing && <RefreshCw className="animate-spin text-blue-500" size={20}/>}
+               <div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200">
+                 <Search size={18} className="text-slate-400 mr-2" />
+                 <input type="text" placeholder="Tìm nhanh công việc, nhân sự..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" />
+               </div>
            </div>
            <div className="flex items-center gap-6">
              <div className="text-right hidden sm:block">
