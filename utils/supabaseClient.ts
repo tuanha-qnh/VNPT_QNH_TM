@@ -13,17 +13,35 @@ export const dbClient = {
         return data || [];
     },
     async upsert(table: string, id: string, data: any) {
-        // Loại bỏ các key camelCase có thể gây lỗi schema cache nếu lỡ tay truyền vào
+        // Chỉ giữ lại các trường hợp lệ theo chuẩn snake_case của Postgres
         const cleanData: any = {};
+        const validColumns: Record<string, string[]> = {
+            'units': ['id', 'code', 'name', 'parent_id', 'manager_ids', 'address', 'phone', 'level'],
+            'users': ['id', 'hrm_code', 'full_name', 'email', 'username', 'password', 'title', 'unit_id', 'is_first_login', 'can_manage', 'avatar'],
+            'tasks': ['id', 'name', 'content', 'type', 'status', 'priority', 'progress', 'deadline', 'assigner_id', 'primary_ids', 'support_ids', 'project_id', 'ext_request']
+        };
+
+        const allowed = validColumns[table] || [];
+        
         Object.entries(data).forEach(([key, value]) => {
-            // Chỉ giữ lại các key có dấu gạch dưới (snake_case) hoặc các key id, email, username...
-            if (!/[A-Z]/.test(key)) {
-                cleanData[key] = value;
+            // Mapping ngược nếu lỡ truyền camelCase
+            let targetKey = key;
+            if (key === 'hrmCode') targetKey = 'hrm_code';
+            if (key === 'fullName') targetKey = 'full_name';
+            if (key === 'unitId') targetKey = 'unit_id';
+            if (key === 'isFirstLogin') targetKey = 'is_first_login';
+            if (key === 'canManageUsers') targetKey = 'can_manage';
+            
+            if (allowed.includes(targetKey)) {
+                cleanData[targetKey] = value === undefined ? null : value;
             }
         });
         
         const { error } = await supabase.from(table).upsert({ ...cleanData, id }, { onConflict: 'id' });
-        if (error) throw error;
+        if (error) {
+            console.error(`Lỗi Upsert table ${table}:`, error);
+            throw error;
+        }
         return true;
     },
     async delete(table: string, id: string) {

@@ -17,12 +17,20 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [isLoading, setIsLoading] = useState(true); 
 
-  const [activeModule, setActiveModule] = useState('dashboard');
+  // Lưu activeModule vào localStorage
+  const [activeModule, setActiveModule] = useState(() => {
+    return localStorage.getItem('vnpt_active_module') || 'dashboard';
+  });
+  
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+
+  useEffect(() => {
+    localStorage.setItem('vnpt_active_module', activeModule);
+  }, [activeModule]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('vnpt_user_session');
@@ -54,32 +62,32 @@ const App: React.FC = () => {
               id: u.id, 
               code: u.code, 
               name: u.name, 
-              parentId: u.parent_id || u.parentId || null,
-              managerIds: u.manager_ids || u.managerIds || [], 
+              parentId: u.parent_id || null,
+              managerIds: u.manager_ids || [], 
               level: u.level || 0
           })).sort((a, b) => (a.level || 0) - (b.level || 0));
 
           const mappedUsers: User[] = (usersData as any[]).map(u => ({
               id: u.id, 
-              hrmCode: u.hrm_code || u.hrmCode, 
-              fullName: u.full_name || u.fullName, 
-              email: u.email, 
+              hrmCode: u.hrm_code, 
+              fullName: u.full_name, 
+              email: u.email || '', 
               username: u.username, 
               password: u.password, 
               title: u.title, 
-              unitId: u.unit_id || u.unitId, 
-              isFirstLogin: u.is_first_login ?? u.isFirstLogin, 
-              canManageUsers: u.can_manage ?? u.canManageUsers, 
-              avatar: u.avatar
+              unitId: u.unit_id, 
+              isFirstLogin: u.is_first_login, 
+              canManageUsers: u.can_manage, 
+              avatar: u.avatar || ''
           }));
 
           const mappedTasks: Task[] = (tasksData as any[]).map(t => ({
               id: t.id, name: t.name, content: t.content, status: t.status as TaskStatus, 
               priority: t.priority as TaskPriority, progress: t.progress || 0, deadline: t.deadline, 
-              assignerId: t.assigner_id || t.assignerId,
-              primaryAssigneeIds: t.primary_ids || t.primaryAssigneeIds || [], 
-              supportAssigneeIds: t.support_ids || t.supportAssigneeIds || [],
-              type: t.type || 'Single', createdAt: t.created_at || t.createdAt
+              assignerId: t.assigner_id,
+              primaryAssigneeIds: t.primary_ids || [], 
+              supportAssigneeIds: t.support_ids || [],
+              type: t.type || 'Single', createdAt: t.created_at
           }));
           
           setUnits(mappedUnits);
@@ -120,13 +128,14 @@ const App: React.FC = () => {
   const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
       const hashedInput = md5(loginPassword);
+      // Tìm user khớp username và khớp mật khẩu (dạng MD5)
       const user = users.find(u => u.username === loginUsername && (u.password === hashedInput || u.password === loginPassword));
       
       if (user) {
           setCurrentUser(user);
           localStorage.setItem('vnpt_user_session', JSON.stringify(user));
       } else {
-          alert("Sai thông tin đăng nhập.");
+          alert("Tên đăng nhập hoặc mật khẩu không chính xác.");
       }
   };
 
@@ -134,11 +143,11 @@ const App: React.FC = () => {
     if (isLoading) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-blue-600" size={48} /></div>;
     switch (activeModule) {
       case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
-      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} />;
+      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={fetchInitialData} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
-      case 'settings': return <Settings currentUser={currentUser!} />;
+      case 'settings': return <Settings currentUser={currentUser!} onRefresh={fetchInitialData} />;
       default: return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} />;
     }
   };
@@ -153,7 +162,7 @@ const App: React.FC = () => {
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.5</p>
+                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.6</p>
                   </div>
 
                   {(users.length === 0 && !isLoading) ? (
@@ -202,8 +211,8 @@ const App: React.FC = () => {
                  <div className="text-sm font-black text-slate-800 leading-none uppercase tracking-tighter">{currentUser.fullName}</div>
                  <div className="text-[10px] text-blue-600 font-black uppercase tracking-widest mt-1">{currentUser.title}</div>
              </div>
-             <div className="h-12 w-12 bg-gradient-to-tr from-blue-700 to-blue-500 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-blue-100 text-xl border-2 border-white">
-                {currentUser.fullName.charAt(0)}
+             <div className="h-12 w-12 bg-gradient-to-tr from-blue-700 to-blue-500 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-blue-100 text-xl border-2 border-white overflow-hidden">
+                {currentUser.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" /> : currentUser.fullName.charAt(0)}
              </div>
              <button onClick={handleLogout} className="text-slate-300 hover:text-red-600 transition-all p-2 hover:bg-red-50 rounded-xl"><LogOut size={24} /></button>
            </div>

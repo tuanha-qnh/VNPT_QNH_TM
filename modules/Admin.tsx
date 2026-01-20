@@ -12,9 +12,10 @@ interface AdminProps {
   currentUser: User; 
   setUnits: (units: Unit[]) => void;
   setUsers: (users: User[]) => void;
+  onRefresh: () => void;
 }
 
-const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setUsers }) => {
+const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setUsers, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<'units' | 'users'>('users');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -64,7 +65,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               .map(item => ({ ...item, children: build(data, item.id) }));
       };
       
-      // Tìm các nút gốc trong phạm vi nhìn thấy
       let roots = visibleUnits.filter(u => !u.parentId || !visibleUnits.find(p => p.id === u.parentId));
       return roots.map(root => ({ ...root, children: build(visibleUnits, root.id) }));
   }, [visibleUnits]);
@@ -100,7 +100,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                   parent_id: targetParentId,
                   level: (units.find(u => u.id === targetParentId)?.level || 0) + 1
               });
-              window.location.reload();
+              onRefresh();
           }
       } catch (err) { alert("Lỗi khi di chuyển đơn vị"); }
       finally { setIsProcessing(false); }
@@ -189,7 +189,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
         const id = editingItem ? editingItem.id : crypto.randomUUID();
         
         if (activeTab === 'units') {
-            let pId = formData.parentId;
+            let pId = formData.parentId || formData.parent_id;
             if (!pId && formData.code !== 'VNPT_QN') {
                 const root = units.find(u => u.code === 'VNPT_QN');
                 pId = root ? root.id : null;
@@ -201,7 +201,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 level: pId ? (units.find(u => u.id === pId)?.level || 0) + 1 : 0
             });
         } else {
-            const unitId = formData.unitId || (isSystemAdmin ? units[0]?.id : currentUser.unitId);
+            const unitId = formData.unitId || formData.unit_id || (isSystemAdmin ? units[0]?.id : currentUser.unitId);
             
             await dbClient.upsert('users', id, {
                 hrm_code: formData.hrmCode,
@@ -210,13 +210,14 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 password: editingItem ? (formData.newPassword ? md5(formData.newPassword) : formData.password) : md5(formData.password || '123456'),
                 title: formData.title,
                 unit_id: unitId,
-                email: formData.email || '', // FIX LỖI EMAIL NULL
-                is_first_login: editingItem ? (formData.newPassword ? true : formData.isFirstLogin) : true,
-                can_manage: formData.canManageUsers || false
+                email: formData.email || '', 
+                is_first_login: editingItem ? (formData.newPassword ? true : (formData.isFirstLogin ?? formData.is_first_login)) : true,
+                can_manage: formData.canManageUsers ?? formData.can_manage ?? false,
+                avatar: formData.avatar || ''
             });
         }
         setIsModalOpen(false);
-        window.location.reload(); 
+        onRefresh(); // Làm mới dữ liệu thay vì reload toàn trang
     } catch (err: any) {
         alert("Lỗi lưu Cloud: " + err.message);
     } finally {
@@ -228,8 +229,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       if (confirm("Xác nhận xóa bản ghi này?")) {
           setIsProcessing(true);
           try {
-              await dbClient.delete(activeTab, id);
-              window.location.reload();
+              await dbClient.delete(activeTab === 'users' ? 'users' : 'units', id);
+              onRefresh();
           } catch (e: any) { alert("Lỗi xóa: " + e.message); }
           finally { setIsProcessing(false); }
       }
@@ -257,11 +258,12 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       title: row['TITLE'] || Role.STAFF, 
                       is_first_login: true,
                       unit_id: unit.id,
-                      email: row['EMAIL'] || '', // Fix lỗi email null khi import
-                      can_manage: false
+                      email: row['EMAIL'] || '',
+                      can_manage: false,
+                      avatar: ''
                   });
               }
-              window.location.reload();
+              onRefresh();
           } catch (err) { alert("Lỗi Import Cloud"); } finally { setIsProcessing(false); }
       };
       reader.readAsBinaryString(file);
@@ -352,7 +354,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       </div>
 
       {isModalOpen && (
-          <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-6 backdrop-blur-xl">
+          <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-4 backdrop-blur-xl">
               <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white animate-zoom-in">
                   <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
                       <div>
@@ -367,11 +369,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                         <div className="grid grid-cols-2 gap-8">
                             <div className="col-span-2 space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Họ và tên</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50 outline-none focus:border-blue-500" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50 outline-none focus:border-blue-500" value={formData.fullName || formData.full_name || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Mã HRM</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-mono text-blue-600 font-black bg-slate-50 uppercase" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-mono text-blue-600 font-black bg-slate-50 uppercase" value={formData.hrmCode || formData.hrm_code || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Username</label>
@@ -389,7 +391,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                                         <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Cho phép quản lý nhân sự thuộc đơn vị này</div>
                                     </div>
                                 </div>
-                                <input type="checkbox" className="w-6 h-6 rounded-lg accent-amber-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
+                                <input type="checkbox" className="w-6 h-6 rounded-lg accent-amber-600" checked={formData.canManageUsers || formData.can_manage || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
                             </div>
                             <div className="col-span-2 space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{editingItem ? 'Mật khẩu mới (Để trống nếu giữ cũ)' : 'Mật khẩu (Mặc định: 123456)'}</label>
@@ -403,7 +405,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Đơn vị</label>
-                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.unitId || ''} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={!isSystemAdmin}>
+                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.unitId || formData.unit_id || ''} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={!isSystemAdmin}>
                                     {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                 </select>
                             </div>
@@ -416,7 +418,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Đơn vị cha</label>
-                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
+                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.parentId || formData.parent_id || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
                                     <option value="">-- VNPT Quảng Ninh --</option>
                                     {units.filter(u => u.id !== editingItem?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                 </select>

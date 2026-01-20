@@ -7,9 +7,10 @@ import md5 from 'md5';
 
 interface SettingsProps {
     currentUser: User;
+    onRefresh: () => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
+const Settings: React.FC<SettingsProps> = ({ currentUser, onRefresh }) => {
     const [passwordData, setPasswordData] = useState({ old: '', new: '', confirm: '' });
     const [isChangingPass, setIsChangingPass] = useState(false);
     
@@ -38,13 +39,14 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         setIsChangingPass(true);
         try {
             const oldHashed = md5(passwordData.old);
+            // So khớp mật khẩu cũ (có thể là plaintext hoặc MD5)
             if (oldHashed !== currentUser.password && passwordData.old !== currentUser.password) {
                 throw new Error("Mật khẩu cũ không chính xác.");
             }
 
             const newHashed = md5(passwordData.new);
             
-            // Cập nhật payload với mapping chuẩn snake_case và đảm bảo không có giá trị null
+            // Map thủ công chuẩn snake_case để đảm bảo dbClient.upsert không bị lỗi Schema Cache
             const updatePayload = {
                 hrm_code: currentUser.hrmCode,
                 full_name: currentUser.fullName,
@@ -52,7 +54,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                 password: newHashed,
                 title: currentUser.title,
                 unit_id: currentUser.unitId,
-                email: currentUser.email || '', // Fix lỗi null value violates not-null constraint
+                email: currentUser.email || '',
                 is_first_login: false,
                 can_manage: currentUser.canManageUsers || false,
                 avatar: currentUser.avatar || ''
@@ -62,6 +64,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
             
             alert("Đổi mật khẩu thành công! Vui lòng dùng mật khẩu mới cho lần đăng nhập sau.");
             setPasswordData({ old: '', new: '', confirm: '' });
+            onRefresh();
         } catch (err: any) {
             alert("Lỗi: " + err.message);
         } finally {
