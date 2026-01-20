@@ -37,18 +37,28 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
 
         setIsChangingPass(true);
         try {
-            // Kiểm tra mật khẩu cũ (đã được băm md5 khi load từ DB)
             const oldHashed = md5(passwordData.old);
             if (oldHashed !== currentUser.password && passwordData.old !== currentUser.password) {
                 throw new Error("Mật khẩu cũ không chính xác.");
             }
 
             const newHashed = md5(passwordData.new);
-            await dbClient.upsert('users', currentUser.id, {
-                ...currentUser,
+            
+            // SỬA: Mapping CamelCase -> snake_case để tránh lỗi "canManageUsers column not found"
+            const updatePayload = {
+                hrm_code: currentUser.hrmCode,
+                full_name: currentUser.fullName,
+                username: currentUser.username,
                 password: newHashed,
-                is_first_login: false
-            });
+                title: currentUser.title,
+                unit_id: currentUser.unitId,
+                email: currentUser.email || '',
+                is_first_login: false,
+                can_manage: currentUser.canManageUsers || false,
+                avatar: currentUser.avatar
+            };
+
+            await dbClient.upsert('users', currentUser.id, updatePayload);
             
             alert("Đổi mật khẩu thành công! Vui lòng dùng mật khẩu mới cho lần đăng nhập sau.");
             setPasswordData({ old: '', new: '', confirm: '' });
@@ -71,7 +81,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                 <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Cấu hình cá nhân và hệ thống</p>
             </div>
             
-            {/* ĐỔI MẬT KHẨU (CHO TẤT CẢ USER) */}
             <div className="bg-white rounded-[40px] shadow-2xl shadow-blue-50 border border-slate-100 overflow-hidden">
                 <div className="p-6 border-b bg-slate-50/50 flex items-center gap-3">
                     <Key className="text-blue-600" size={24} />
@@ -100,7 +109,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                 </form>
             </div>
 
-            {/* CÀI ĐẶT EMAIL (CHỈ DÀNH CHO ADMIN HỆ THỐNG) */}
             {isSystemAdmin ? (
                 <div className="bg-white rounded-[40px] shadow-2xl shadow-blue-50 border border-slate-100 overflow-hidden opacity-100">
                     <div className="p-6 border-b bg-slate-50 flex items-center gap-3">

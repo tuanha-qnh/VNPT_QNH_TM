@@ -27,7 +27,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
 
   // Lọc danh sách nhân sự có thể nhìn thấy
   const visibleUsers = useMemo(() => {
+      // Sub-admin phải nhìn thấy chính mình và các nhân viên cùng unitId
       let filtered = isSystemAdmin ? users : users.filter(u => u.unitId === currentUser.unitId);
+      
       if (searchTerm) {
           filtered = filtered.filter(u => 
               u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -41,6 +43,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
   // Lọc đơn vị hiển thị
   const visibleUnits = useMemo(() => {
       if (isSystemAdmin) return units;
+      // Sub-admin chỉ thấy đơn vị của mình
       return units.filter(u => u.id === currentUser.unitId);
   }, [units, isSystemAdmin, currentUser.unitId]);
 
@@ -55,9 +58,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               .filter(item => item.parentId === parentId)
               .map(item => ({ ...item, children: build(data, item.id) }));
       };
-      const root = visibleUnits.find(u => u.code === 'VNPT_QN' || !u.parentId);
-      if (!root && visibleUnits.length > 0) return build(visibleUnits, null);
-      return root ? [{ ...root, children: build(visibleUnits, root.id) }] : [];
+      
+      // Tìm root phù hợp với phạm vi nhìn thấy
+      let roots = visibleUnits.filter(u => !u.parentId || !visibleUnits.find(p => p.id === u.parentId));
+      
+      return roots.map(root => ({ ...root, children: build(visibleUnits, root.id) }));
   }, [visibleUnits]);
 
   // --- LOGIC DRAG & DROP ĐƠN VỊ ---
@@ -70,7 +75,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
       const unitId = e.dataTransfer.getData("unitId");
       if (unitId === targetParentId) return;
 
-      // Không cho phép kéo cha vào con (tránh vòng lặp vô tận)
       const isDescendant = (id: string, potentialParentId: string): boolean => {
           const u = units.find(x => x.id === id);
           if (!u || !u.parentId) return false;
@@ -87,7 +91,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           const unitToMove = units.find(u => u.id === unitId);
           if (unitToMove) {
               await dbClient.upsert('units', unitId, {
-                  ...unitToMove,
+                  code: unitToMove.code,
+                  name: unitToMove.name,
                   parent_id: targetParentId,
                   level: (units.find(u => u.id === targetParentId)?.level || 0) + 1
               });
@@ -135,12 +140,11 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               
               {isOpen && (
                   <>
-                    {/* Nếu là mode Users, hiện danh sách nhân sự ngay dưới đơn vị */}
                     {mode === 'users' && unitUsers.map(user => (
                         <div key={user.id} className="flex items-center py-3 px-8 hover:bg-emerald-50/50 transition-all border-b border-slate-50 group">
                              <div style={{ width: `${(level + 1) * 32}px` }} className="shrink-0" />
                              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mr-4 border-2 border-white shadow-sm overflow-hidden text-slate-400">
-                                 {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover"/> : <UserIcon size={20}/>}
+                                 {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" alt="avatar"/> : <UserIcon size={20}/>}
                              </div>
                              <div className="flex-1">
                                  <div className="text-sm font-black text-slate-700 flex items-center gap-2">
@@ -166,21 +170,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
 
   const handleEdit = (item: any) => {
       setEditingItem(item);
-      // Map back database values to form
-      const data = { ...item };
-      if (item.hrmCode) { // It's a user
-          setFormData({
-              ...data,
-              hrmCode: item.hrmCode,
-              fullName: item.fullName,
-              username: item.username,
-              unitId: item.unitId
-          });
-          setActiveTab('users');
-      } else { // It's a unit
-          setFormData({ ...data });
-          setActiveTab('units');
-      }
+      setFormData({ ...item });
+      if (!item.hrmCode) setActiveTab('units');
+      else setActiveTab('users');
       setIsModalOpen(true);
   };
 
@@ -190,7 +182,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
 
     setIsProcessing(true);
     try {
-        // SỬA LỖI UUID: Dùng crypto.randomUUID() thay vì unit_timestamp
         const id = editingItem ? editingItem.id : crypto.randomUUID();
         
         if (activeTab === 'units') {
@@ -200,25 +191,35 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 const root = units.find(u => u.code === 'VNPT_QN');
                 pId = root ? root.id : null;
             }
+            // SỬA: Mapping CamelCase -> snake_case cho Unit
             await dbClient.upsert('units', id, {
-                id, code, name: formData.name, parent_id: pId,
+                code, 
+                name: formData.name, 
+                parent_id: pId,
                 level: pId ? (units.find(u => u.id === pId)?.level || 0) + 1 : 0
             });
         } else {
             const unitId = isSystemAdmin ? (formData.unitId || units[0]?.id) : currentUser.unitId;
-            await dbClient.upsert('users', id, {
-                id, hrm_code: formData.hrmCode, full_name: formData.fullName,
+            
+            // SỬA: Mapping CamelCase -> snake_case cho User và FIX LỖI EMAIL NULL
+            const userPayload = {
+                hrm_code: formData.hrmCode,
+                full_name: formData.fullName,
                 username: formData.username,
                 password: editingItem ? (formData.newPassword ? md5(formData.newPassword) : formData.password) : md5(formData.password || '123456'),
-                title: formData.title, unit_id: unitId, email: formData.email,
+                title: formData.title,
+                unit_id: unitId,
+                email: formData.email || '', // Đảm bảo không bao giờ null
                 is_first_login: editingItem ? (formData.newPassword ? true : formData.isFirstLogin) : true,
                 can_manage: formData.canManageUsers || false
-            });
+            };
+            
+            await dbClient.upsert('users', id, userPayload);
         }
         setIsModalOpen(false);
         window.location.reload(); 
     } catch (err: any) {
-        alert("Lỗi: " + err.message);
+        alert("Lỗi lưu Cloud: " + err.message);
     } finally {
         setIsProcessing(false);
     }
@@ -230,7 +231,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           try {
               await dbClient.delete(activeTab, id);
               window.location.reload();
-          } catch (e: any) { alert("Lỗi: " + e.message); }
+          } catch (e: any) { alert("Lỗi xóa: " + e.message); }
           finally { setIsProcessing(false); }
       }
   };
@@ -248,7 +249,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                   const hrmCode = String(row['HRM_CODE'] || '').trim();
                   if (!hrmCode) continue;
                   const unit = units.find(u => u.code === row['UNIT_CODE']) || units[0];
-                  // Sử dụng UUID cho Import mới
+                  
                   await dbClient.upsert('users', crypto.randomUUID(), {
                       hrm_code: hrmCode,
                       full_name: row['FULL_NAME'] || '', 
@@ -257,7 +258,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                       title: row['TITLE'] || Role.STAFF, 
                       is_first_login: true,
                       unit_id: unit.id,
-                      email: row['EMAIL'] || ''
+                      email: row['EMAIL'] || '', // Fix lỗi email null khi import
+                      can_manage: false
                   });
               }
               window.location.reload();
@@ -282,7 +284,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 <ShieldCheck className="text-blue-600" size={40} /> QUẢN TRỊ HỆ THỐNG
             </h2>
             <p className="text-xs text-slate-400 font-black uppercase tracking-widest mt-2">
-                Sơ đồ tổ chức & Quản lý nhân sự Cloud
+                {isSystemAdmin ? 'Toàn quyền điều hành toàn tỉnh' : `Đơn vị: ${units.find(u => u.id === currentUser.unitId)?.name}`}
             </p>
         </div>
         <div className="flex bg-slate-200 p-1.5 rounded-3xl border border-slate-300">
@@ -295,7 +297,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           {isProcessing && (
               <div className="absolute inset-0 bg-white/70 backdrop-blur-md z-[60] flex flex-col items-center justify-center">
                   <Loader2 className="animate-spin text-blue-600" size={64} />
-                  <span className="font-black text-blue-900 uppercase tracking-widest mt-6">Đang xử lý dữ liệu Cloud...</span>
+                  <span className="font-black text-blue-900 uppercase tracking-widest mt-6">Đang đồng bộ Cloud...</span>
               </div>
           )}
 
@@ -316,16 +318,16 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               <div className="flex flex-wrap gap-3">
                   {activeTab === 'users' && isSystemAdmin && (
                       <>
-                        <button onClick={downloadSampleFile} className="bg-white text-slate-600 border border-slate-200 px-6 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 hover:bg-slate-50 transition-all">
+                        <button onClick={downloadSampleFile} className="bg-white text-slate-600 border border-slate-200 px-6 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 hover:bg-slate-50">
                             <Download size={16}/> MẪU
                         </button>
                         <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls" onChange={handleImportUsers} />
-                        <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-6 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 hover:bg-emerald-100 transition-all">
+                        <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-6 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 hover:bg-emerald-100">
                             <FileSpreadsheet size={18}/> IMPORT
                         </button>
                       </>
                   )}
-                  <button onClick={() => { setEditingItem(null); setFormData(activeTab === 'users' ? { unitId: currentUser.unitId } : {}); setIsModalOpen(true); }} className="bg-blue-600 text-white px-10 py-3 rounded-2xl font-black text-[10px] tracking-widest shadow-xl flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-all">
+                  <button onClick={() => { setEditingItem(null); setFormData(activeTab === 'users' ? { unitId: currentUser.unitId } : {}); setIsModalOpen(true); }} className="bg-blue-600 text-white px-10 py-3 rounded-2xl font-black text-[10px] tracking-widest shadow-xl flex items-center gap-2 hover:bg-blue-700">
                       <Plus size={20}/> THÊM MỚI
                   </button>
               </div>
@@ -334,101 +336,116 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           <div className="flex-1 overflow-auto bg-white">
               {unitTree.length > 0 ? (
                   <div className="divide-y divide-slate-50 pb-20">
-                      {activeTab === 'units' ? (
+                      {activeTab === 'units' && (
                           <div className="p-4 bg-blue-50/50 border-b border-blue-100 text-[10px] font-black text-blue-600 uppercase tracking-widest text-center">
                               Mẹo: Kéo và thả các đơn vị để thay đổi cấu trúc quản lý
                           </div>
-                      ) : null}
+                      )}
                       {unitTree.map(root => <TreeRow key={root.id} item={root} level={0} mode={activeTab} />)}
                   </div>
               ) : (
                   <div className="p-20 text-center flex flex-col items-center">
-                      <div className="p-10 bg-slate-50 rounded-full mb-6">
-                         <Building size={64} className="text-slate-200" />
-                      </div>
-                      <p className="text-slate-400 font-bold italic">Không tìm thấy đơn vị hoặc nhân sự phù hợp.</p>
+                      <Building size={64} className="text-slate-200 mb-6" />
+                      <p className="text-slate-400 font-bold italic">Không tìm thấy dữ liệu phù hợp.</p>
                   </div>
               )}
           </div>
       </div>
 
-      {isModalOpen && (
+      {isModalOpen && ( activeTab === 'users' ? (
           <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-6 backdrop-blur-xl">
               <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white animate-zoom-in">
                   <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
                       <div>
-                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'Cập nhật Cloud' : 'Tạo bản ghi mới'}</h3>
-                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">{activeTab === 'users' ? 'Dữ liệu nhân sự' : 'Thông tin đơn vị'}</p>
+                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'Cập nhật nhân sự' : 'Tạo nhân sự mới'}</h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Cloud User Data</p>
                       </div>
-                      <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4 rounded-full transition-all"><X size={32}/></button>
+                      <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4 rounded-full"><X size={32}/></button>
                   </div>
                   
                   <div className="p-12 space-y-8 max-h-[60vh] overflow-y-auto">
-                      {activeTab === 'users' ? (
-                          <div className="grid grid-cols-2 gap-8">
+                        <div className="grid grid-cols-2 gap-8">
                             <div className="col-span-2 space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Họ và tên nhân sự</label>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Họ và tên</label>
                                 <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50 outline-none focus:border-blue-500" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Mã HRM</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-mono text-blue-600 font-black bg-slate-50 uppercase outline-none focus:border-blue-500" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-mono text-blue-600 font-black bg-slate-50 uppercase" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Username đăng nhập</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50 outline-none focus:border-blue-500" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} disabled={editingItem && editingItem.username === 'admin'} />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Username</label>
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} disabled={editingItem && editingItem.username === 'admin'} />
+                            </div>
+                            <div className="col-span-2 space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Email công vụ</label>
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50" placeholder="example@vnpt.vn" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} />
                             </div>
                             <div className="col-span-2 p-6 bg-amber-50 rounded-3xl border border-amber-100 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <Shield className="text-amber-600" size={24}/>
                                     <div>
                                         <div className="text-sm font-black text-amber-900">Quản trị đơn vị (Sub-Admin)</div>
-                                        <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Cấp quyền sửa/xóa nhân viên cho tài khoản này</div>
+                                        <div className="text-[10px] text-amber-500 font-bold uppercase mt-0.5">Cho phép quản lý nhân sự thuộc đơn vị này</div>
                                     </div>
                                 </div>
                                 <input type="checkbox" className="w-6 h-6 rounded-lg accent-amber-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
                             </div>
                             <div className="col-span-2 space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{editingItem ? 'Mật khẩu mới (Để trống nếu giữ cũ)' : 'Mật khẩu (Mặc định: 123456)'}</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 bg-slate-50 outline-none focus:border-blue-500" type="password" onChange={e => setFormData({...formData, [editingItem ? 'newPassword' : 'password']: e.target.value})} />
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 bg-slate-50" type="password" onChange={e => setFormData({...formData, [editingItem ? 'newPassword' : 'password']: e.target.value})} />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Chức danh / Vai trò</label>
-                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})}>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Chức danh</label>
+                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})}>
                                     {Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}
                                 </select>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Phòng ban công tác</label>
-                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.unitId || ''} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={!isSystemAdmin}>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Đơn vị</label>
+                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.unitId || ''} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={!isSystemAdmin}>
                                     {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                 </select>
                             </div>
-                          </div>
-                      ) : (
-                          <div className="space-y-8">
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Tên đơn vị / Phòng ban</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Trực thuộc đơn vị (Cấp cha)</label>
-                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
-                                    <option value="">-- VNPT Quảng Ninh (Gốc) --</option>
-                                    {units.filter(u => u.id !== editingItem?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                </select>
-                            </div>
-                          </div>
-                      )}
+                        </div>
                   </div>
 
                   <div className="p-12 border-t bg-slate-50/50 flex justify-end gap-6">
-                      <button onClick={() => setIsModalOpen(false)} className="px-10 py-5 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-600 transition-all">Hủy bỏ</button>
-                      <button onClick={handleSave} className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-blue-700 transition-all active:scale-95">Lưu lên Cloud</button>
+                      <button onClick={() => setIsModalOpen(false)} className="px-10 py-5 text-slate-400 font-black uppercase text-xs tracking-widest">Hủy</button>
+                      <button onClick={handleSave} className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-blue-700 active:scale-95 transition-all">Lưu Cloud</button>
                   </div>
               </div>
           </div>
-      )}
+      ) : (
+          <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-6 backdrop-blur-xl">
+              <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white animate-zoom-in">
+                   <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
+                      <div>
+                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'Cập nhật đơn vị' : 'Tạo đơn vị mới'}</h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Cloud Unit Data</p>
+                      </div>
+                      <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4 rounded-full"><X size={32}/></button>
+                  </div>
+                  <div className="p-12 space-y-8">
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Tên đơn vị</label>
+                            <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Đơn vị cha</label>
+                            <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
+                                <option value="">-- VNPT Quảng Ninh --</option>
+                                {units.filter(u => u.id !== editingItem?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                        </div>
+                  </div>
+                  <div className="p-12 border-t bg-slate-50/50 flex justify-end gap-6">
+                      <button onClick={() => setIsModalOpen(false)} className="px-10 py-5 text-slate-400 font-black uppercase text-xs tracking-widest">Hủy</button>
+                      <button onClick={handleSave} className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-blue-700 active:scale-95 transition-all">Lưu Cloud</button>
+                  </div>
+              </div>
+          </div>
+      ))}
     </div>
   );
 };

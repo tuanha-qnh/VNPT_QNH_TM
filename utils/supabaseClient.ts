@@ -6,7 +6,6 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Bộ Client chung để thay thế dbClient (Firebase cũ)
 export const dbClient = {
     async getAll(table: string) {
         const { data, error } = await supabase.from(table).select('*');
@@ -14,8 +13,16 @@ export const dbClient = {
         return data || [];
     },
     async upsert(table: string, id: string, data: any) {
-        // Chuyển đổi CamelCase sang snake_case trước khi lưu nếu cần (hoặc dùng data trực tiếp)
-        const { error } = await supabase.from(table).upsert({ ...data, id }, { onConflict: 'id' });
+        // Loại bỏ các key camelCase có thể gây lỗi schema cache nếu lỡ tay truyền vào
+        const cleanData: any = {};
+        Object.entries(data).forEach(([key, value]) => {
+            // Chỉ giữ lại các key có dấu gạch dưới (snake_case) hoặc các key id, email, username...
+            if (!/[A-Z]/.test(key)) {
+                cleanData[key] = value;
+            }
+        });
+        
+        const { error } = await supabase.from(table).upsert({ ...cleanData, id }, { onConflict: 'id' });
         if (error) throw error;
         return true;
     },
