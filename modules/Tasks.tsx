@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Task, TaskStatus, TaskPriority, User, Unit, ExtensionRequest } from '../types';
+import { Task, TaskStatus, TaskPriority, User, Unit, ExtensionRequest, Role } from '../types';
 import { Calendar, LayoutList, Plus, Search, MoreHorizontal, User as UserIcon, Clock, AlertTriangle, CheckCircle, X, Edit2, Trash2, Save, ChevronLeft, ChevronRight, Loader2, ArrowRight } from 'lucide-react';
 import { supabase } from '../utils/supabaseClient'; 
 
@@ -35,26 +35,25 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
   const [isEditingTask, setIsEditingTask] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // Extension State
   const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [extensionReason, setExtensionReason] = useState('');
   const [extensionDate, setExtensionDate] = useState('');
 
-  // Update State Buffer
   const [tempProgress, setTempProgress] = useState(0);
   const [tempStatus, setTempStatus] = useState<TaskStatus>(TaskStatus.PENDING);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Form State (Create & Edit)
   const [taskForm, setTaskForm] = useState<Partial<Task>>({
     type: 'Single',
     primaryAssigneeIds: [],
     supportAssigneeIds: []
   });
 
-  // Timeline State
   const timelineScrollRef = useRef<HTMLDivElement>(null);
   const [timelineStart, setTimelineStart] = useState(new Date());
+
+  // KIỂM TRA QUYỀN GIAO VIỆC: Nhân viên không được giao việc
+  const canAssignTask = currentUser.title !== Role.STAFF && currentUser.title !== 'Nhân viên';
 
   const resetForm = () => {
     setTaskForm({ type: 'Single', primaryAssigneeIds: [], supportAssigneeIds: [] });
@@ -65,12 +64,15 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
   };
 
   const openCreateModal = () => {
+      if (!canAssignTask) {
+          alert("Bạn không có quyền giao việc. Vui lòng liên hệ lãnh đạo phòng.");
+          return;
+      }
       resetForm();
       setShowCreateForm(true);
   };
 
-  // --- QUYỀN TRUY CẬP ---
-  const isAssigner = selectedTask ? (currentUser.id === selectedTask.assignerId || currentUser.hrmCode === 'ADMIN') : false;
+  const isAssigner = selectedTask ? (currentUser.id === selectedTask.assignerId || currentUser.username === 'admin') : false;
   const isPrimaryAssignee = selectedTask ? selectedTask.primaryAssigneeIds.includes(currentUser.id) : false;
 
   useEffect(() => {
@@ -104,7 +106,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
         if (error) throw error;
         
         if (data && data[0]) {
-            // Map back to App Type
             const t = data[0];
             const newTask: Task = {
                  id: t.id, name: t.name, content: t.content, type: t.type, status: t.status,
@@ -124,7 +125,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
     }
   };
 
-  // --- NÚT CẬP NHẬT KẾT QUẢ (CONFIRMATION) ---
   const handleConfirmUpdate = async () => {
       if (!selectedTask) return;
       if (!confirm("Bạn có chắc chắn muốn cập nhật kết quả thực hiện này không?")) return;
@@ -148,7 +148,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       }
   };
 
-  // --- LOGIC GIAO DIỆN CẬP NHẬT TRẠNG THÁI ---
   const handleTempChange = (field: 'status' | 'progress', value: any) => {
       if (field === 'status') setTempStatus(value);
       if (field === 'progress') setTempProgress(parseInt(value));
@@ -184,7 +183,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       }
   };
 
-  // --- LOGIC GIA HẠN (EXTENSION) ---
   const handleRequestExtension = async () => {
       if (!selectedTask || !extensionDate || !extensionReason) return alert("Vui lòng nhập đầy đủ thông tin.");
       setIsProcessing(true);
@@ -251,7 +249,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
       }
   };
 
-  // ... (UI Helper: Toggle Selection, Timeline calc -> Giữ nguyên)
   const toggleSelection = (id: string, field: 'primaryAssigneeIds' | 'supportAssigneeIds') => {
       const current = taskForm[field] || [];
       const updated = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
@@ -289,20 +286,24 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
 
   return (
     <div className="space-y-6 h-full flex flex-col">
-      {/* Header Controls */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
            <h2 className="text-2xl font-bold text-slate-800">Quản lý công việc</h2>
-           <p className="text-sm text-slate-500">Người dùng: <span className="font-semibold text-blue-600">{currentUser.fullName}</span></p>
+           <p className="text-sm text-slate-500">Xin chào, <span className="font-semibold text-blue-600">{currentUser.fullName}</span></p>
         </div>
         <div className="flex gap-2">
            <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-blue-100 text-blue-700' : 'bg-white'}`}><LayoutList size={20}/></button>
            <button onClick={() => setViewMode('timeline')} className={`p-2 rounded-lg ${viewMode === 'timeline' ? 'bg-blue-100 text-blue-700' : 'bg-white'}`}><Calendar size={20}/></button>
-           <button onClick={openCreateModal} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md ml-2"><Plus size={16} /> Giao việc mới</button>
+           
+           {/* CHỈ HIỆN NÚT GIAO VIỆC NẾU KHÔNG PHẢI LÀ NHÂN VIÊN */}
+           {canAssignTask && (
+                <button onClick={openCreateModal} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md ml-2">
+                    <Plus size={16} /> Giao việc mới
+                </button>
+           )}
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
         {viewMode === 'list' && (
           <div className="overflow-auto flex-1">
@@ -431,7 +432,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                         <label className="block text-sm font-medium mb-1">Loại công việc</label>
                         <select className="w-full border rounded-lg p-2.5" onChange={e => setTaskForm({...taskForm, type: e.target.value as any})}><option value="Single">Giao việc lẻ</option><option value="Project">Dự án</option></select>
                     </div>
-                    {/* Multi-Select Simulation */}
                     <div className="col-span-2 grid grid-cols-2 gap-4">
                         <div className="border p-3 rounded-lg max-h-40 overflow-y-auto">
                              <div className="text-sm font-bold mb-2 text-blue-700">Người chủ trì</div>
@@ -497,7 +497,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                 <div className="flex-1 overflow-y-auto p-6">
                     {isEditingTask ? (
                          <div className="space-y-4">
-                             {/* Form Edit */}
                              <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
                                     <label className="block text-sm font-medium mb-1">Tên công việc</label>
@@ -541,7 +540,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                                     <p className="text-slate-600 whitespace-pre-wrap">{selectedTask.content}</p>
                                 </div>
                                 
-                                {/* UPDATE PROGRESS (Only for Primary Assignee) */}
                                 {isPrimaryAssignee ? (
                                     <div className="border-2 border-blue-100 rounded-xl p-4 bg-blue-50/50 shadow-sm animate-fade-in">
                                         <h4 className="font-bold text-sm text-blue-800 mb-4 flex items-center gap-2"><Edit2 size={16}/> Cập nhật kết quả (Dành cho người chủ trì)</h4>
@@ -575,7 +573,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                                 )}
                             </div>
 
-                            {/* RIGHT SIDEBAR */}
                             <div className="space-y-4">
                                 <div className="border p-4 rounded-lg bg-slate-50">
                                     <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Tiến độ hiện tại</h4>
@@ -585,7 +582,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, setTask
                                 </div>
                                 <div className="border p-4 rounded-lg"><h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Người chủ trì</h4>{selectedTask.primaryAssigneeIds.map(id => <div key={id} className="text-sm font-medium text-slate-800 flex items-center gap-2"><UserIcon size={12}/>{users.find(x => x.id === id)?.fullName}</div>)}</div>
                                 
-                                {/* EXTENSION REQUEST UI */}
                                 <div className="border p-4 rounded-lg bg-orange-50 border-orange-100">
                                     <h4 className="text-xs font-bold text-orange-600 uppercase mb-2">Gia hạn Deadline</h4>
                                     

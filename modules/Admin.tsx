@@ -25,10 +25,27 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
 
   const isSystemAdmin = currentUser.username === 'admin';
 
-  // Lọc danh sách nhân sự có thể nhìn thấy
+  // Helper: Lấy toàn bộ ID của các đơn vị con (decedants)
+  const getDescendantUnitIds = (unitId: string): string[] => {
+      let ids: string[] = [unitId];
+      const children = units.filter(u => u.parentId === unitId);
+      children.forEach(child => {
+          ids = [...ids, ...getDescendantUnitIds(child.id)];
+      });
+      return ids;
+  };
+
+  // Lọc đơn vị hiển thị
+  const visibleUnits = useMemo(() => {
+      if (isSystemAdmin) return units;
+      const myManageableIds = getDescendantUnitIds(currentUser.unitId);
+      return units.filter(u => myManageableIds.includes(u.id));
+  }, [units, isSystemAdmin, currentUser.unitId]);
+
+  // Lọc danh sách nhân sự có thể nhìn thấy (Toàn bộ người trong cây đơn vị quản lý)
   const visibleUsers = useMemo(() => {
-      // Sub-admin phải nhìn thấy chính mình và các nhân viên cùng unitId
-      let filtered = isSystemAdmin ? users : users.filter(u => u.unitId === currentUser.unitId);
+      const manageableUnitIds = isSystemAdmin ? units.map(u => u.id) : getDescendantUnitIds(currentUser.unitId);
+      let filtered = users.filter(u => manageableUnitIds.includes(u.unitId));
       
       if (searchTerm) {
           filtered = filtered.filter(u => 
@@ -38,19 +55,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           );
       }
       return filtered;
-  }, [users, isSystemAdmin, currentUser.unitId, searchTerm]);
-
-  // Lọc đơn vị hiển thị
-  const visibleUnits = useMemo(() => {
-      if (isSystemAdmin) return units;
-      // Sub-admin chỉ thấy đơn vị của mình
-      return units.filter(u => u.id === currentUser.unitId);
-  }, [units, isSystemAdmin, currentUser.unitId]);
-
-  const generateUnitCode = () => {
-      const num = Math.floor(Math.random() * 9999) + 1;
-      return `QNH${num.toString().padStart(4, '0')}`;
-  };
+  }, [users, isSystemAdmin, currentUser.unitId, units, searchTerm]);
 
   const unitTree = useMemo(() => {
       const build = (data: Unit[], parentId: string | null = null): any[] => {
@@ -59,9 +64,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
               .map(item => ({ ...item, children: build(data, item.id) }));
       };
       
-      // Tìm root phù hợp với phạm vi nhìn thấy
+      // Tìm các nút gốc trong phạm vi nhìn thấy
       let roots = visibleUnits.filter(u => !u.parentId || !visibleUnits.find(p => p.id === u.parentId));
-      
       return roots.map(root => ({ ...root, children: build(visibleUnits, root.id) }));
   }, [visibleUnits]);
 
@@ -185,36 +189,31 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
         const id = editingItem ? editingItem.id : crypto.randomUUID();
         
         if (activeTab === 'units') {
-            const code = editingItem ? formData.code : generateUnitCode();
             let pId = formData.parentId;
-            if (!pId && code !== 'VNPT_QN') {
+            if (!pId && formData.code !== 'VNPT_QN') {
                 const root = units.find(u => u.code === 'VNPT_QN');
                 pId = root ? root.id : null;
             }
-            // SỬA: Mapping CamelCase -> snake_case cho Unit
             await dbClient.upsert('units', id, {
-                code, 
+                code: editingItem ? formData.code : `QNH${Math.floor(Math.random() * 9000) + 1000}`,
                 name: formData.name, 
                 parent_id: pId,
                 level: pId ? (units.find(u => u.id === pId)?.level || 0) + 1 : 0
             });
         } else {
-            const unitId = isSystemAdmin ? (formData.unitId || units[0]?.id) : currentUser.unitId;
+            const unitId = formData.unitId || (isSystemAdmin ? units[0]?.id : currentUser.unitId);
             
-            // SỬA: Mapping CamelCase -> snake_case cho User và FIX LỖI EMAIL NULL
-            const userPayload = {
+            await dbClient.upsert('users', id, {
                 hrm_code: formData.hrmCode,
                 full_name: formData.fullName,
                 username: formData.username,
                 password: editingItem ? (formData.newPassword ? md5(formData.newPassword) : formData.password) : md5(formData.password || '123456'),
                 title: formData.title,
                 unit_id: unitId,
-                email: formData.email || '', // Đảm bảo không bao giờ null
+                email: formData.email || '', // FIX LỖI EMAIL NULL
                 is_first_login: editingItem ? (formData.newPassword ? true : formData.isFirstLogin) : true,
                 can_manage: formData.canManageUsers || false
-            };
-            
-            await dbClient.upsert('users', id, userPayload);
+            });
         }
         setIsModalOpen(false);
         window.location.reload(); 
@@ -284,7 +283,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                 <ShieldCheck className="text-blue-600" size={40} /> QUẢN TRỊ HỆ THỐNG
             </h2>
             <p className="text-xs text-slate-400 font-black uppercase tracking-widest mt-2">
-                {isSystemAdmin ? 'Toàn quyền điều hành toàn tỉnh' : `Đơn vị: ${units.find(u => u.id === currentUser.unitId)?.name}`}
+                {isSystemAdmin ? 'Toàn quyền điều hành toàn tỉnh' : `Đơn vị quản lý: ${units.find(u => u.id === currentUser.unitId)?.name}`}
             </p>
         </div>
         <div className="flex bg-slate-200 p-1.5 rounded-3xl border border-slate-300">
@@ -352,18 +351,19 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
           </div>
       </div>
 
-      {isModalOpen && ( activeTab === 'users' ? (
+      {isModalOpen && (
           <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-6 backdrop-blur-xl">
               <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white animate-zoom-in">
                   <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
                       <div>
-                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'Cập nhật nhân sự' : 'Tạo nhân sự mới'}</h3>
-                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Cloud User Data</p>
+                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? (activeTab === 'users' ? 'Cập nhật nhân sự' : 'Cập nhật đơn vị') : (activeTab === 'users' ? 'Tạo nhân sự mới' : 'Tạo đơn vị mới')}</h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">{activeTab === 'users' ? 'Dữ liệu nhân sự' : 'Thông tin đơn vị'}</p>
                       </div>
                       <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4 rounded-full"><X size={32}/></button>
                   </div>
                   
                   <div className="p-12 space-y-8 max-h-[60vh] overflow-y-auto">
+                      {activeTab === 'users' ? (
                         <div className="grid grid-cols-2 gap-8">
                             <div className="col-span-2 space-y-2">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Họ và tên</label>
@@ -408,6 +408,21 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                                 </select>
                             </div>
                         </div>
+                      ) : (
+                        <div className="space-y-8">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Tên đơn vị</label>
+                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Đơn vị cha</label>
+                                <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
+                                    <option value="">-- VNPT Quảng Ninh --</option>
+                                    {units.filter(u => u.id !== editingItem?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                      )}
                   </div>
 
                   <div className="p-12 border-t bg-slate-50/50 flex justify-end gap-6">
@@ -416,36 +431,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setU
                   </div>
               </div>
           </div>
-      ) : (
-          <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-6 backdrop-blur-xl">
-              <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white animate-zoom-in">
-                   <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
-                      <div>
-                        <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'Cập nhật đơn vị' : 'Tạo đơn vị mới'}</h3>
-                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Cloud Unit Data</p>
-                      </div>
-                      <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4 rounded-full"><X size={32}/></button>
-                  </div>
-                  <div className="p-12 space-y-8">
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Tên đơn vị</label>
-                            <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Đơn vị cha</label>
-                            <select className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value})}>
-                                <option value="">-- VNPT Quảng Ninh --</option>
-                                {units.filter(u => u.id !== editingItem?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                            </select>
-                        </div>
-                  </div>
-                  <div className="p-12 border-t bg-slate-50/50 flex justify-end gap-6">
-                      <button onClick={() => setIsModalOpen(false)} className="px-10 py-5 text-slate-400 font-black uppercase text-xs tracking-widest">Hủy</button>
-                      <button onClick={handleSave} className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-blue-700 active:scale-95 transition-all">Lưu Cloud</button>
-                  </div>
-              </div>
-          </div>
-      ))}
+      )}
     </div>
   );
 };

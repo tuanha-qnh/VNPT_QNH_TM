@@ -44,7 +44,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
 
             const newHashed = md5(passwordData.new);
             
-            // SỬA: Mapping CamelCase -> snake_case để tránh lỗi "canManageUsers column not found"
+            // Cập nhật payload với mapping chuẩn snake_case và đảm bảo không có giá trị null
             const updatePayload = {
                 hrm_code: currentUser.hrmCode,
                 full_name: currentUser.fullName,
@@ -52,10 +52,10 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                 password: newHashed,
                 title: currentUser.title,
                 unit_id: currentUser.unitId,
-                email: currentUser.email || '',
+                email: currentUser.email || '', // Fix lỗi null value violates not-null constraint
                 is_first_login: false,
                 can_manage: currentUser.canManageUsers || false,
-                avatar: currentUser.avatar
+                avatar: currentUser.avatar || ''
             };
 
             await dbClient.upsert('users', currentUser.id, updatePayload);
