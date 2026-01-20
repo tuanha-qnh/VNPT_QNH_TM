@@ -1,63 +1,68 @@
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, setDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 
-// ĐÂY LÀ CONFIG MẪU. 
-// Bạn hãy tạo 1 Project tại: https://console.firebase.google.com/
-// Sau đó Copy cấu hình của bạn vào đây. 
-// Firestore có gói MIỄN PHÍ VĨNH VIỄN (Spark Plan) rất tốt cho dự án này.
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+/**
+ * HƯỚNG DẪN DÁN CẤU HÌNH:
+ * 1. Mở Firebase Console -> Project Settings.
+ * 2. Copy đoạn firebaseConfig của bạn và thay thế toàn bộ object bên dưới.
+ */
 const firebaseConfig = {
-  apiKey: "AIzaSyAdNg-BYCKVyIXmwJVpKAVhJuK4RrMrDG8",
-  authDomain: "dhkd-task-manager.firebaseapp.com",
-  projectId: "dhkd-task-manager",
-  storageBucket: "dhkd-task-manager.firebasestorage.app",
-  messagingSenderId: "1068491178770",
-  appId: "1:1068491178770:web:1327d65223772d5e9ce9cb",
-  measurementId: "G-F0X5S2NXS7"
+  apiKey: "AIzaSyAs-VUI-LONG-THAY-KEY-THAT-CUA-BAN",
+  authDomain: "vnpt-qn-task.firebaseapp.com",
+  projectId: "vnpt-qn-task",
+  storageBucket: "vnpt-qn-task.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef123456"
 };
 
-// Initialize Firebase
+// Khởi tạo Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+export const db = getFirestore(app);
 
-// Các helper function để thao tác dữ liệu giống như một Database thực thụ
 export const dbClient = {
+    // Lấy toàn bộ dữ liệu từ một bảng (collection)
     async getAll(colName: string) {
         try {
+            // Kiểm tra xem đã thay config chưa
+            if (firebaseConfig.apiKey.includes("VUI-LONG-THAY")) {
+                throw new Error("Chưa cấu hình Firebase");
+            }
             const querySnapshot = await getDocs(collection(db, colName));
-            return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Backup vào LocalStorage đề phòng mất mạng
+            localStorage.setItem(`backup_${colName}`, JSON.stringify(data));
+            return data;
         } catch (e) {
-            console.warn(`Lỗi Firebase (${colName}), sử dụng LocalStorage làm fallback`);
-            const local = localStorage.getItem(`db_${colName}`);
+            console.warn(`Sử dụng dữ liệu dự phòng cho ${colName}`);
+            const local = localStorage.getItem(`backup_${colName}`);
             return local ? JSON.parse(local) : [];
         }
     },
+
+    // Lưu hoặc Cập nhật một bản ghi
     async upsert(colName: string, id: string, data: any) {
         try {
-            await setDoc(doc(db, colName, id), data, { merge: true });
+            const docRef = doc(db, colName, id);
+            await setDoc(docRef, data, { merge: true });
         } catch (e) {
             console.error("Lỗi lưu Firebase:", e);
+            // Fallback lưu tạm vào LocalStorage nếu Firebase lỗi
+            const local = JSON.parse(localStorage.getItem(`backup_${colName}`) || '[]');
+            const idx = local.findIndex((i: any) => i.id === id);
+            if (idx >= 0) local[idx] = { ...local[idx], ...data, id };
+            else local.push({ ...data, id });
+            localStorage.setItem(`backup_${colName}`, JSON.stringify(local));
         }
-        // Luôn lưu một bản vào LocalStorage để tránh lỗi màn hình trắng
-        const local = await this.getAll(colName);
-        const index = local.findIndex((item: any) => item.id === id);
-        if (index >= 0) local[index] = { ...local[index], ...data, id };
-        else local.push({ ...data, id });
-        localStorage.setItem(`db_${colName}`, JSON.stringify(local));
     },
+
+    // Xóa một bản ghi
     async delete(colName: string, id: string) {
         try {
             await deleteDoc(doc(db, colName, id));
-        } catch (e) { console.error(e); }
-        const local = await this.getAll(colName);
-        localStorage.setItem(`db_${colName}`, JSON.stringify(local.filter((i: any) => i.id !== id)));
+        } catch (e) {
+            console.error(e);
+        }
     }
 };
