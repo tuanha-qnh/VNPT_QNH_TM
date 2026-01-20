@@ -50,7 +50,6 @@ const App: React.FC = () => {
               dbClient.getAll('tasks')
           ]);
 
-          // Map snake_case từ Supabase sang camelCase cho React
           const mappedUnits: Unit[] = (unitsData as any[]).map(u => ({
               id: u.id, 
               code: u.code, 
@@ -75,18 +74,12 @@ const App: React.FC = () => {
           }));
 
           const mappedTasks: Task[] = (tasksData as any[]).map(t => ({
-              id: t.id, 
-              name: t.name, 
-              content: t.content, 
-              status: t.status as TaskStatus, 
-              priority: t.priority as TaskPriority,
-              progress: t.progress || 0, 
-              deadline: t.deadline, 
+              id: t.id, name: t.name, content: t.content, status: t.status as TaskStatus, 
+              priority: t.priority as TaskPriority, progress: t.progress || 0, deadline: t.deadline, 
               assignerId: t.assigner_id || t.assignerId,
               primaryAssigneeIds: t.primary_ids || t.primaryAssigneeIds || [], 
               supportAssigneeIds: t.support_ids || t.supportAssigneeIds || [],
-              type: t.type || 'Single', 
-              createdAt: t.created_at || t.createdAt
+              type: t.type || 'Single', createdAt: t.created_at || t.createdAt
           }));
           
           setUnits(mappedUnits);
@@ -103,27 +96,16 @@ const App: React.FC = () => {
     if (!confirm("Hệ thống sẽ khởi tạo dữ liệu gốc lên Supabase Cloud. Tiếp tục?")) return;
     setIsLoading(true);
     try {
-        // 1. Khởi tạo đơn vị gốc (ID cố định để dễ quản lý)
         const rootId = '00000000-0000-0000-0000-000000000001';
         await dbClient.upsert('units', rootId, { 
-            code: 'VNPT_QN', 
-            name: 'VNPT Quảng Ninh (Gốc)', 
-            level: 0, 
-            parent_id: null 
+            code: 'VNPT_QN', name: 'VNPT Quảng Ninh (Gốc)', level: 0, parent_id: null 
         });
 
-        // 2. Khởi tạo Admin
         const adminId = '00000000-0000-0000-0000-000000000002';
         await dbClient.upsert('users', adminId, {
-            hrm_code: 'ADMIN',
-            full_name: 'Quản Trị Viên',
-            email: 'admin@vnpt.vn',
-            username: 'admin',
-            password: md5('123'), 
-            title: Role.DIRECTOR,
-            unit_id: rootId,
-            is_first_login: false,
-            can_manage: true
+            hrm_code: 'ADMIN', full_name: 'Quản Trị Viên', email: 'admin@vnpt.vn',
+            username: 'admin', password: md5('123'), title: Role.DIRECTOR,
+            unit_id: rootId, is_first_login: false, can_manage: true
         });
 
         await fetchInitialData();
@@ -144,7 +126,7 @@ const App: React.FC = () => {
           setCurrentUser(user);
           localStorage.setItem('vnpt_user_session', JSON.stringify(user));
       } else {
-          alert("Sai thông tin đăng nhập. Nếu bạn vừa khởi tạo, hãy dùng admin/123");
+          alert("Sai thông tin đăng nhập.");
       }
   };
 
@@ -166,9 +148,8 @@ const App: React.FC = () => {
           <div className="min-h-screen bg-[#F1F5F9] flex items-center justify-center p-6 bg-[url('https://www.toptal.com/designers/subtlepatterns/uploads/dot-grid.png')]">
               <div className="bg-white p-12 rounded-[40px] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)] w-full max-w-md border border-white relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
-                  
                   <div className="text-center mb-10">
-                    <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl shadow-blue-200 animate-bounce-slow">
+                    <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl shadow-blue-200">
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
@@ -179,30 +160,27 @@ const App: React.FC = () => {
                       <div className="space-y-6 animate-fade-in">
                           <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 flex gap-3">
                              <ShieldAlert className="text-amber-500 shrink-0" size={20}/>
-                             <p className="text-xs text-amber-700 font-bold leading-relaxed">
-                                Dữ liệu trên Cloud đang trống hoặc chưa được kết nối. Vui lòng bấm khởi tạo để thiết lập tài khoản Admin và Đơn vị gốc.
+                             <p className="text-xs text-amber-700 font-bold leading-relaxed text-center">
+                                Cơ sở dữ liệu trống. Vui lòng bấm để khởi tạo.
                              </p>
                           </div>
-                          <button onClick={handleInitializeSystem} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 hover:bg-black shadow-2xl transition-all active:scale-95">
-                             <Database size={20}/> Khởi tạo Supabase Cloud
+                          <button onClick={handleInitializeSystem} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all">
+                             <Database size={20}/> Khởi tạo Database Cloud
                           </button>
                       </div>
                    ) : (
                       <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
                           <div className="space-y-1.5">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
-                              <input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" placeholder="admin" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
+                              <input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
                           </div>
                           <div className="space-y-1.5">
                               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label>
-                              <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" placeholder="••••••••" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
+                              <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
                           </div>
                           <button type="submit" disabled={isLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center">
                              {isLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
                           </button>
-                          <div className="text-center pt-4">
-                             <button type="button" onClick={handleInitializeSystem} className="text-[10px] font-black text-slate-300 hover:text-blue-600 uppercase tracking-widest transition-colors">Re-Initialize Cloud Database</button>
-                          </div>
                       </form>
                    )}
               </div>
@@ -212,7 +190,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex min-h-screen bg-[#F8FAFC]">
-      <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
+      <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} currentUser={currentUser} />
       <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-16'} flex flex-col`}>
         <header className="h-20 bg-white/80 backdrop-blur-md sticky top-0 border-b px-8 flex items-center justify-between z-40">
            <div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200">

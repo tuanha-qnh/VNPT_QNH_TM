@@ -1,23 +1,29 @@
 
 import React from 'react';
 import { LayoutDashboard, Users, CheckSquare, BarChart2, Settings, Menu, PieChart } from 'lucide-react';
+import { User } from '../types';
 
 interface SidebarProps {
   activeModule: string;
   setActiveModule: (module: string) => void;
   isOpen: boolean;
   toggleSidebar: () => void;
+  currentUser: User;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen, toggleSidebar }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen, toggleSidebar, currentUser }) => {
+  const isSystemAdmin = currentUser.username === 'admin';
+  const isUnitAdmin = currentUser.canManageUsers === true;
+
   const menuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: <LayoutDashboard size={20} /> },
-    { id: 'admin', label: 'Quản trị hệ thống', icon: <Users size={20} /> },
+    // Chỉ hiện Quản trị nếu là Admin hệ thống hoặc Admin đơn vị
+    (isSystemAdmin || isUnitAdmin) ? { id: 'admin', label: 'Quản trị nhân sự', icon: <Users size={20} /> } : null,
     { id: 'tasks', label: 'Quản lý công việc', icon: <CheckSquare size={20} /> },
     { type: 'divider' },
     { id: 'kpi-group', label: 'KPI Tập thể', icon: <PieChart size={20} /> },
     { id: 'kpi-personal', label: 'KPI Cá nhân', icon: <BarChart2 size={20} /> },
-  ];
+  ].filter(Boolean);
 
   return (
     <div className={`fixed left-0 top-0 h-full bg-[#0f172a] text-white transition-all duration-300 z-50 flex flex-col ${isOpen ? 'w-64' : 'w-16'}`}>
@@ -30,7 +36,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
 
       <nav className="flex-1 py-4">
         <ul>
-          {menuItems.map((item, index) => {
+          {menuItems.map((item: any, index) => {
             if (item.type === 'divider') {
                 return <li key={`div-${index}`} className="my-2 border-t border-white/10"></li>;
             }
@@ -64,7 +70,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
         
         {isOpen && (
             <div className="px-4 text-[10px] text-gray-500 text-center pt-2">
-                Version 1.1.1 (Hotfix)
+                Version 1.5.2 (Secured)
             </div>
         )}
       </div>
