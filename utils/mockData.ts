@@ -42,6 +42,8 @@ const initialTasks: Task[] = [
     progress: 45,
     priority: TaskPriority.HIGH,
     createdAt: new Date().toISOString(),
+    // Added missing required property 'assignmentSource'
+    assignmentSource: 'Direct',
   },
   {
     id: 't2',
@@ -59,6 +61,8 @@ const initialTasks: Task[] = [
     progress: 80,
     priority: TaskPriority.MEDIUM,
     createdAt: new Date().toISOString(),
+    // Added missing required property 'assignmentSource'
+    assignmentSource: 'Direct',
   },
 ];
 

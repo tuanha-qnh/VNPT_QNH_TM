@@ -79,6 +79,11 @@ export interface Task {
   difficulties?: string; // Báo cáo vướng mắc
   extensionRequest?: ExtensionRequest;
   timeline?: TaskTimeline[];
+  // New Fields
+  assignmentSource: 'eOffice' | 'Zalo' | 'Direct' | string;
+  eOfficeNumber?: string;
+  coordinationInstructions?: string; // Chỉ đạo phối hợp
+  executionResults?: string; // Kết quả thực hiện (dành cho nhân sự)
   // Added properties to match mock data in utils/mockData.ts
   type?: string;
   projectId?: string;

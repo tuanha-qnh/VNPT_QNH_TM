@@ -24,6 +24,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
 
   const isSystemAdmin = currentUser.username === 'admin';
   const isSubAdmin = currentUser.canManageUsers === true;
+  const canModify = isSystemAdmin || isSubAdmin;
 
   // PHÂN QUYỀN HIỂN THỊ DANH SÁCH NHÂN SỰ
   const filteredUsers = useMemo(() => {
@@ -56,6 +57,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   }, [units]);
 
   const handleDownloadTemplate = () => {
+    if (!canModify) return alert("Bạn không có quyền thực hiện thao tác này.");
     const data = [
       { 
         "Họ và tên": "Nguyễn Văn A", 
@@ -74,6 +76,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canModify) return alert("Bạn không có quyền thực hiện thao tác này.");
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -95,10 +98,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           const unitCodeFromExcel = String(row["Mã đơn vị"] || "").trim();
           const targetUnit = units.find(u => u.code === unitCodeFromExcel);
           
-          // Logic gán unitId:
-          // 1. Nếu tìm thấy đơn vị theo mã -> gán vào đơn vị đó
-          // 2. Nếu không tìm thấy và là SubAdmin -> gán vào đơn vị của SubAdmin
-          // 3. Nếu là System Admin và không tìm thấy -> gán vào gốc
           let unitIdToAssign = targetUnit ? targetUnit.id : (isSubAdmin ? currentUser.unitId : units[0]?.id);
 
           // Ràng buộc bảo mật cho SubAdmin: Chỉ được import nhân sự vào đúng đơn vị của mình
@@ -132,6 +131,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   };
 
   const handleSave = async () => {
+    if (!canModify) return alert("Bạn không có quyền thực hiện thao tác này.");
     if (activeTab === 'users' && (!formData.fullName || !formData.hrmCode || !formData.username)) {
       return alert("Vui lòng nhập đầy đủ thông tin.");
     }
@@ -149,7 +149,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           level: parentId ? 1 : 0
         });
       } else {
-        // Ràng buộc bảo mật cho SubAdmin khi tạo/sửa tay
         const payload = {
           ...formData,
           unitId: (isSubAdmin && !isSystemAdmin) ? currentUser.unitId : (formData.unitId || currentUser.unitId),
@@ -167,7 +166,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
     }
   };
 
-  // Fix: Explicitly type UnitNode as React.FC to support 'key' prop in recursive and list rendering
   const UnitNode: React.FC<{ item: any, level: number }> = ({ item, level }) => {
     const [isOpen, setIsOpen] = useState(true);
     return (
@@ -216,18 +214,20 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
             </div>
           </div>
           
-          <div className="flex gap-2">
-            <button onClick={handleDownloadTemplate} className="px-4 py-2.5 text-blue-600 font-bold text-xs flex items-center gap-2 hover:bg-blue-50 rounded-xl"><Download size={16}/> TẢI MẪU</button>
-            <label className="px-4 py-2.5 bg-slate-800 text-white font-bold text-xs flex items-center gap-2 hover:bg-black rounded-xl cursor-pointer">
-              <UploadCloud size={16}/> IMPORT EXCEL
-              <input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} />
-            </label>
-            <button onClick={() => { 
-              setEditingItem(null); 
-              setFormData({ unitId: currentUser.unitId, title: Role.STAFF }); 
-              setIsModalOpen(true); 
-            }} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"><Plus size={18}/> THÊM MỚI</button>
-          </div>
+          {canModify && (
+            <div className="flex gap-2">
+              <button onClick={handleDownloadTemplate} className="px-4 py-2.5 text-blue-600 font-bold text-xs flex items-center gap-2 hover:bg-blue-50 rounded-xl"><Download size={16}/> TẢI MẪU</button>
+              <label className="px-4 py-2.5 bg-slate-800 text-white font-bold text-xs flex items-center gap-2 hover:bg-black rounded-xl cursor-pointer">
+                <UploadCloud size={16}/> IMPORT EXCEL
+                <input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} />
+              </label>
+              <button onClick={() => { 
+                setEditingItem(null); 
+                setFormData({ unitId: currentUser.unitId, title: Role.STAFF }); 
+                setIsModalOpen(true); 
+              }} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"><Plus size={18}/> THÊM MỚI</button>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-auto">
@@ -263,7 +263,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                     <td className="p-4 text-xs font-bold text-slate-500">{user.title}</td>
                     <td className="p-4 text-xs text-slate-400">{units.find(u => u.id === user.unitId)?.name || 'N/A'}</td>
                     <td className="p-4 text-right">
-                      {/* PHÂN QUYỀN SỬA/XÓA: Chỉ admin hệ thống hoặc SubAdmin của đúng đơn vị đó mới được thao tác */}
                       {(isSystemAdmin || (isSubAdmin && user.unitId === currentUser.unitId)) && (
                         <div className="flex justify-end gap-1">
                           <button onClick={() => { setEditingItem(user); setFormData(user); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600"><Edit2 size={16}/></button>
