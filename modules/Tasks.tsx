@@ -29,23 +29,23 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
 
-  // Logic lọc danh sách nhân sự có thể giao việc dựa trên phân cấp
+  // Logic lọc danh sách nhân sự có thể giao việc dựa trên phân cấp (Thực hiện theo yêu cầu mới nhất)
   const assignableUsers = useMemo(() => {
-    // 1. Chỉ lấy nhân sự trong cùng đơn vị và không phải bản thân
+    // 1. Chỉ lấy nhân sự trong cùng đơn vị và loại bỏ chính người giao việc
     let list = users.filter(u => u.unitId === currentUser.unitId && u.id !== currentUser.id);
 
-    // 2. Xử lý logic cấp phó (Phó Giám đốc, Phó phòng)
+    // 2. Logic phân tầng chức danh
     if (currentUser.title === Role.VICE_DIRECTOR) {
-      // Phó Giám đốc nhìn thấy: Trưởng phòng, Phó phòng, Chuyên viên, Nhân viên
+      // Phó Giám đốc giao được cho: Trưởng phòng, Phó phòng, Chuyên viên, Nhân viên
       const subordinates = [Role.MANAGER, Role.VICE_MANAGER, Role.SPECIALIST, Role.STAFF];
       list = list.filter(u => subordinates.includes(u.title as Role));
     } else if (currentUser.title === Role.VICE_MANAGER) {
-      // Phó phòng nhìn thấy: Chuyên viên, Nhân viên
+      // Phó phòng chỉ giao được cho: Chuyên viên, Nhân viên
       const subordinates = [Role.SPECIALIST, Role.STAFF];
       list = list.filter(u => subordinates.includes(u.title as Role));
     }
     
-    // Giám đốc và Trưởng phòng (mặc định filter cùng đơn vị đã là cấp dưới của họ)
+    // Giám đốc và Trưởng phòng mặc định nhìn thấy toàn bộ cấp dưới cùng đơn vị
     return list;
   }, [users, currentUser]);
 
@@ -324,6 +324,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
             </div>
             
             <div className="flex-1 overflow-y-auto p-8 space-y-8">
+              {/* PHẦN DUYỆT GIA HẠN DÀNH CHO NGƯỜI GIAO VIỆC */}
               {selectedTask.extensionRequest?.status === 'pending' && selectedTask.assignerId === currentUser.id && (
                 <div className="bg-red-50 border-2 border-red-200 p-6 rounded-[28px] space-y-4 animate-pulse-slow">
                   <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><AlertTriangle size={16}/> ĐỀ NGHỊ GIA HẠN THỜI GIAN</h4>
@@ -377,6 +378,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                 </div>
               </div>
 
+              {/* PHẦN ĐỀ NGHỊ GIA HẠN DÀNH CHO NHÂN VIÊN */}
               {selectedTask.primaryAssigneeIds.includes(currentUser.id) && selectedTask.assignerId !== currentUser.id && (
                 <div className="bg-red-50 p-6 rounded-[32px] border-2 border-red-100 space-y-4">
                   <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><Timer size={16}/> ĐỀ NGHỊ GIA HẠN DEADLINE</h4>
