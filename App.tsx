@@ -6,9 +6,9 @@ import Admin from './modules/Admin';
 import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
-import { dbClient } from './utils/firebaseClient'; // Đổi sang Firebase
+import { dbClient } from './utils/firebaseClient'; 
 import { Task, Unit, User, Role, TaskStatus, TaskPriority } from './types';
-import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, AlertCircle } from 'lucide-react';
 import md5 from 'md5'; 
 
 const App: React.FC = () => {
@@ -96,7 +96,11 @@ const App: React.FC = () => {
         await fetchInitialData();
         alert("Khởi tạo Firebase Cloud Database thành công!\nĐăng nhập bằng: admin / 123");
     } catch (err: any) {
-        alert("Lỗi khởi tạo: " + err.message);
+        if (err.message.includes('permission')) {
+            alert("LỖI PHÂN QUYỀN FIREBASE:\n\nVui lòng vào Firebase Console -> Firestore -> Rules và đổi thành 'allow read, write: if true;'.\n\nChi tiết lỗi: " + err.message);
+        } else {
+            alert("Lỗi khởi tạo: " + err.message);
+        }
     } finally {
         setIsInitialLoading(false);
     }
@@ -117,13 +121,14 @@ const App: React.FC = () => {
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     switch (activeModule) {
-      case 'dashboard': return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} groupKpi={kpis} />;
-      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} setUnits={setUnits} setUsers={setUsers} onRefresh={() => fetchInitialData(true)} />;
-      case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} setTasks={setTasks} />;
+      // Fix: Pass users prop to Dashboard
+      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
+      case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
+      case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
-      default: return <Dashboard tasks={tasks} units={units} currentUser={currentUser!} groupKpi={kpis} />;
+      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
     }
   };
 
@@ -143,7 +148,10 @@ const App: React.FC = () => {
                       <div className="space-y-6 animate-fade-in">
                           <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 flex gap-3">
                              <ShieldAlert className="text-amber-500 shrink-0" size={20}/>
-                             <p className="text-xs text-amber-700 font-bold leading-relaxed text-center">Firebase trống. Vui lòng bấm để khởi tạo.</p>
+                             <div>
+                                <p className="text-[10px] text-amber-800 font-black uppercase tracking-wider">Lỗi kết nối hoặc DB trống</p>
+                                <p className="text-[10px] text-amber-700 font-medium leading-tight mt-0.5">Nếu nút khởi tạo bên dưới báo lỗi "Permissions", hãy kiểm tra Firestore Rules.</p>
+                             </div>
                           </div>
                           <button onClick={handleInitializeSystem} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all">
                              <Database size={20}/> Khởi tạo Firebase Cloud

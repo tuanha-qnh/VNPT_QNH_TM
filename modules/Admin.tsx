@@ -1,277 +1,323 @@
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Unit, User, Role } from '../types';
-import { Plus, Edit2, Trash2, Building, User as UserIcon, Users, Save, X, ChevronRight, ChevronDown, FileSpreadsheet, Loader2, ShieldCheck, TreePine, Download, RefreshCw, AlertCircle, Database, Lock, Shield, Search, GripVertical } from 'lucide-react';
+import { Plus, Edit2, Trash2, Building, User as UserIcon, Users, Save, X, ChevronRight, ChevronDown, FileSpreadsheet, Loader2, Search, Download, GripVertical, ShieldCheck, Key, UploadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { dbClient } from '../utils/firebaseClient'; // Đổi sang Firebase
-import md5 from 'md5'; 
+import { dbClient } from '../utils/firebaseClient';
+import md5 from 'md5';
 
 interface AdminProps {
   units: Unit[];
   users: User[];
-  currentUser: User; 
-  setUnits: (units: Unit[]) => void;
-  setUsers: (users: User[]) => void;
+  currentUser: User;
   onRefresh: () => void;
 }
 
-const Admin: React.FC<AdminProps> = ({ units, users, currentUser, setUnits, setUsers, onRefresh }) => {
+const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<'units' | 'users'>('users');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
-  const [isProcessing, setIsProcessing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [filterUnit, setFilterUnit] = useState('all');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const isSystemAdmin = currentUser.username === 'admin';
+  const isSubAdmin = currentUser.canManageUsers;
 
-  const getDescendantUnitIds = (unitId: string): string[] => {
-      let ids: string[] = [unitId];
-      const children = units.filter(u => u.parentId === unitId);
-      children.forEach(child => {
-          ids = [...ids, ...getDescendantUnitIds(child.id)];
-      });
-      return ids;
+  const generateUnitCode = () => {
+    const num = Math.floor(Math.random() * 999) + 1;
+    return `QNH${num.toString().padStart(3, '0')}`;
   };
 
-  const visibleUnits = useMemo(() => {
-      if (isSystemAdmin) return units;
-      const myManageableIds = getDescendantUnitIds(currentUser.unitId);
-      return units.filter(u => myManageableIds.includes(u.id));
-  }, [units, isSystemAdmin, currentUser.unitId]);
-
-  const visibleUsers = useMemo(() => {
-      const manageableUnitIds = isSystemAdmin ? units.map(u => u.id) : getDescendantUnitIds(currentUser.unitId);
-      let filtered = users.filter(u => manageableUnitIds.includes(u.unitId));
-      if (searchTerm) {
-          filtered = filtered.filter(u => 
-              u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-              u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              u.hrmCode.toLowerCase().includes(searchTerm.toLowerCase())
-          );
-      }
-      return filtered;
-  }, [users, isSystemAdmin, currentUser.unitId, units, searchTerm]);
+  const filteredUsers = useMemo(() => {
+    let list = users;
+    // Quyền: SubAdmin chỉ thấy user trong đơn vị mình
+    if (!isSystemAdmin) {
+      list = users.filter(u => u.unitId === currentUser.unitId);
+    }
+    if (filterUnit !== 'all') list = list.filter(u => u.unitId === filterUnit);
+    if (searchTerm) {
+      const s = searchTerm.toLowerCase();
+      list = list.filter(u => u.fullName.toLowerCase().includes(s) || u.hrmCode.toLowerCase().includes(s) || u.username.toLowerCase().includes(s));
+    }
+    return list;
+  }, [users, isSystemAdmin, currentUser.unitId, filterUnit, searchTerm]);
 
   const unitTree = useMemo(() => {
-      const build = (data: Unit[], parentId: string | null = null): any[] => {
-          return data
-              .filter(item => item.parentId === parentId)
-              .map(item => ({ ...item, children: build(data, item.id) }));
-      };
-      let roots = visibleUnits.filter(u => !u.parentId || !visibleUnits.find(p => p.id === u.parentId));
-      return roots.map(root => ({ ...root, children: build(visibleUnits, root.id) }));
-  }, [visibleUnits]);
+    const build = (parentId: string | null = null): any[] => {
+      return units
+        .filter(u => u.parentId === parentId)
+        .map(u => ({ ...u, children: build(u.id) }));
+    };
+    return build(null);
+  }, [units]);
 
-  const handleEdit = (item: any) => {
-      setEditingItem(item);
-      setFormData({ ...item });
-      setIsModalOpen(true);
+  const handleDownloadTemplate = () => {
+    const data = [
+      { "Họ và tên": "Nguyễn Văn A", "Mã HRM": "12345", "Username": "anv", "Mật khẩu": "123", "Chức danh": "Nhân viên", "SubAdmin": "No" }
+    ];
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "DanhSach");
+    XLSX.writeFile(wb, "Mau_Import_NhanSu.xlsx");
+  };
+
+  const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
+      
+      setIsProcessing(true);
+      for (const row of data) {
+        const id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        await dbClient.upsert('users', id, {
+          hrmCode: String(row["Mã HRM"]),
+          fullName: row["Họ và tên"],
+          username: row["Username"],
+          password: md5(String(row["Mật khẩu"] || '123')),
+          title: row["Chức danh"] || Role.STAFF,
+          unitId: currentUser.unitId,
+          isFirstLogin: true,
+          canManageUsers: row["SubAdmin"]?.toLowerCase() === 'yes'
+        });
+      }
+      onRefresh();
+      setIsProcessing(false);
+      alert(`Đã import ${data.length} nhân sự thành công!`);
+    };
+    reader.readAsBinaryString(file);
   };
 
   const handleSave = async () => {
+    if (activeTab === 'users' && (!formData.fullName || !formData.hrmCode || !formData.username)) return alert("Vui lòng nhập đầy đủ thông tin.");
     setIsProcessing(true);
     try {
-        const id = editingItem ? editingItem.id : (activeTab === 'users' ? `user_${Date.now()}` : `unit_${Date.now()}`);
-        if (activeTab === 'units') {
-            await dbClient.upsert('units', id, {
-                code: formData.code || `QNH${Math.floor(Math.random() * 9000) + 1000}`,
-                name: formData.name, 
-                parentId: formData.parentId || null,
-                level: formData.parentId ? (units.find(u => u.id === formData.parentId)?.level || 0) + 1 : 0
-            });
-        } else {
-            let finalPassword = formData.password;
-            if (editingItem && formData.newPassword) finalPassword = md5(formData.newPassword);
-            else if (!editingItem) finalPassword = md5(formData.password || '123456');
-
-            await dbClient.upsert('users', id, {
-                hrmCode: formData.hrmCode,
-                fullName: formData.fullName,
-                username: formData.username,
-                password: finalPassword,
-                title: formData.title || Role.STAFF,
-                unitId: formData.unitId || currentUser.unitId,
-                email: formData.email || '', 
-                isFirstLogin: editingItem ? (formData.newPassword ? true : (formData.isFirstLogin)) : true,
-                canManageUsers: formData.canManageUsers ?? false,
-                avatar: formData.avatar || ''
-            });
-        }
-        setIsModalOpen(false);
-        onRefresh(); 
-    } catch (err: any) {
-        alert("Lỗi lưu Firebase: " + err.message);
-    } finally {
-        setIsProcessing(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-      if (confirm("Xác nhận xóa bản ghi này trên Firebase?")) {
-          setIsProcessing(true);
-          try {
-              await dbClient.delete(activeTab === 'users' ? 'users' : 'units', id);
-              onRefresh();
-          } catch (e: any) { alert("Lỗi xóa: " + e.message); }
-          finally { setIsProcessing(false); }
+      const id = editingItem?.id || (activeTab === 'users' ? `user_${Date.now()}` : `unit_${Date.now()}`);
+      if (activeTab === 'units') {
+        // Luôn gán gốc là VNPT QN nếu không có parent
+        const parentId = formData.parentId || units.find(u => u.code === 'VNPT_QN')?.id || null;
+        await dbClient.upsert('units', id, {
+          ...formData,
+          code: editingItem ? formData.code : generateUnitCode(),
+          parentId,
+          level: parentId ? 1 : 0
+        });
+      } else {
+        const payload = {
+          ...formData,
+          password: formData.newPassword ? md5(formData.newPassword) : (editingItem ? formData.password : md5(formData.password || '123'))
+        };
+        delete payload.newPassword;
+        await dbClient.upsert('users', id, payload);
       }
+      setIsModalOpen(false);
+      onRefresh();
+    } catch (e) { alert("Lỗi lưu dữ liệu."); }
+    finally { setIsProcessing(false); }
   };
 
-  const handleImportUsers = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setIsProcessing(true);
-      const reader = new FileReader();
-      reader.onload = async (evt) => {
-          try {
-              const wb = XLSX.read(evt.target?.result, { type: 'binary' });
-              const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-              for (const row of data) {
-                  const hrmCode = String(row['HRM_CODE'] || '').trim();
-                  if (!hrmCode) continue;
-                  const unit = units.find(u => u.code === row['UNIT_CODE']) || units[0];
-                  const id = `user_${hrmCode}`;
-                  await dbClient.upsert('users', id, {
-                      hrmCode, fullName: row['FULL_NAME'] || '', 
-                      username: row['USERNAME'] || hrmCode.toLowerCase(),
-                      password: md5('123456'), title: row['TITLE'] || Role.STAFF, 
-                      isFirstLogin: true, unitId: unit.id, email: row['EMAIL'] || '',
-                      canManageUsers: false, avatar: ''
-                  });
-              }
-              onRefresh();
-          } catch (err) { alert("Lỗi Import Firebase"); } finally { setIsProcessing(false); }
-      };
-      reader.readAsBinaryString(file);
-  };
-
-  const TreeRow: React.FC<{ item: any; level: number; mode: 'units' | 'users' }> = ({ item, level, mode }) => {
-      const [isOpen, setIsOpen] = useState(true);
-      const hasChildren = item.children && item.children.length > 0;
-      const unitUsers = visibleUsers.filter(u => u.unitId === item.id);
-      return (
-          <div className="flex flex-col">
-              <div className={`flex items-center group py-4 px-8 hover:bg-blue-50/50 transition-all border-b border-slate-50 ${level === 0 ? 'bg-slate-50/30 font-black' : ''}`}>
-                  <div style={{ width: `${level * 32}px` }} className="shrink-0" />
-                  <button onClick={() => setIsOpen(!isOpen)} className={`p-1 mr-3 text-slate-400 hover:text-blue-600 ${(mode === 'units' ? !hasChildren : (!hasChildren && unitUsers.length === 0)) ? 'invisible' : ''}`}>
-                      {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </button>
-                  <Building size={18} className={`mr-4 ${level === 0 ? 'text-blue-600' : 'text-slate-400'}`} />
-                  <div className="flex-1">
-                      <div className="text-sm font-bold text-slate-800 tracking-tight">{item.name}</div>
-                      <div className="text-[10px] font-mono font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">{item.code}</div>
-                  </div>
-                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                      <button onClick={() => handleEdit(item)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl shadow-sm border border-transparent hover:border-blue-100"><Edit2 size={14}/></button>
-                      {item.code !== 'VNPT_QN' && isSystemAdmin && (
-                          <button onClick={() => handleDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-white rounded-xl shadow-sm border border-transparent hover:border-red-100"><Trash2 size={14}/></button>
-                      )}
-                  </div>
-              </div>
-              {isOpen && (
-                  <>
-                    {mode === 'users' && unitUsers.map(user => (
-                        <div key={user.id} className="flex items-center py-3 px-8 hover:bg-emerald-50/50 transition-all border-b border-slate-50 group">
-                             <div style={{ width: `${(level + 1) * 32}px` }} className="shrink-0" />
-                             <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mr-4 border-2 border-white shadow-sm overflow-hidden text-slate-400">
-                                 {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" /> : <UserIcon size={20}/>}
-                             </div>
-                             <div className="flex-1">
-                                 <div className="text-sm font-black text-slate-700 flex items-center gap-2">{user.fullName}</div>
-                                 <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{user.title} • @{user.username}</div>
-                             </div>
-                             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                                <button onClick={() => handleEdit(user)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl"><Edit2 size={14}/></button>
-                                {user.username !== 'admin' && (
-                                    <button onClick={() => handleDelete(user.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-white rounded-xl"><Trash2 size={14}/></button>
-                                )}
-                             </div>
-                        </div>
-                    ))}
-                    {hasChildren && item.children.map((child: any) => <TreeRow key={child.id} item={child} level={level + 1} mode={mode} />)}
-                  </>
-              )}
-          </div>
-      );
+  // Fix: Explicitly include 'key' in props type to avoid TS error in JSX map calls (lines 157, 207)
+  const UnitNode = ({ item, level }: { item: any, level: number, key?: any }) => {
+    const [isOpen, setIsOpen] = useState(true);
+    return (
+      <div className="flex flex-col">
+        <div 
+          className={`flex items-center py-3 px-4 hover:bg-blue-50 border-b group transition-colors ${level === 0 ? 'bg-slate-50 font-black' : ''}`}
+          draggable={isSystemAdmin}
+          onDragStart={(e) => e.dataTransfer.setData("unitId", item.id)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={async (e) => {
+            e.preventDefault();
+            const draggedId = e.dataTransfer.getData("unitId");
+            if (draggedId === item.id) return;
+            await dbClient.update('units', draggedId, { parentId: item.id });
+            onRefresh();
+          }}
+        >
+          <div style={{ width: level * 24 }} />
+          {item.children.length > 0 ? (
+            <button onClick={() => setIsOpen(!isOpen)} className="p-1 mr-2 text-slate-400">
+              {isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+            </button>
+          ) : <div className="w-6" />}
+          <Building size={16} className="text-blue-600 mr-3" />
+          <span className="flex-1 text-sm text-slate-700">{item.name} <span className="text-[10px] text-slate-400 font-mono ml-2">[{item.code}]</span></span>
+          {isSystemAdmin && item.code !== 'VNPT_QN' && (
+            <div className="flex gap-2 opacity-0 group-hover:opacity-100">
+              <button onClick={() => { setEditingItem(item); setFormData(item); setIsModalOpen(true); }} className="p-1.5 hover:bg-white rounded border text-blue-500"><Edit2 size={12}/></button>
+              <button onClick={async () => { if(confirm("Xóa đơn vị này?")) { await dbClient.delete('units', item.id); onRefresh(); }}} className="p-1.5 hover:bg-white rounded border text-red-500"><Trash2 size={12}/></button>
+            </div>
+          )}
+        </div>
+        {isOpen && item.children.map((c: any) => <UnitNode key={c.id} item={c} level={level + 1} />)}
+      </div>
+    );
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-20">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div>
-            <h2 className="text-4xl font-black text-slate-800 tracking-tighter flex items-center gap-4">
-                <ShieldCheck className="text-blue-600" size={40} /> QUẢN TRỊ FIREBASE
-            </h2>
-            <p className="text-xs text-slate-400 font-black uppercase tracking-widest mt-2">Dữ liệu hoàn toàn trên Cloud Firestore</p>
-        </div>
-        <div className="flex bg-slate-200 p-1.5 rounded-3xl border border-slate-300">
-          <button onClick={() => setActiveTab('users')} className={`px-10 py-3.5 rounded-2xl text-xs font-black transition-all flex items-center gap-3 ${activeTab === 'users' ? 'bg-white text-blue-600 shadow-2xl' : 'text-slate-500'}`}><Users size={18}/> NHÂN SỰ</button>
-          {isSystemAdmin && <button onClick={() => setActiveTab('units')} className={`px-10 py-3.5 rounded-2xl text-xs font-black transition-all flex items-center gap-3 ${activeTab === 'units' ? 'bg-white text-blue-600 shadow-2xl' : 'text-slate-500'}`}><TreePine size={18}/> ĐƠN VỊ</button>}
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
+          <ShieldCheck className="text-blue-600" size={32}/> QUẢN TRỊ HỆ THỐNG
+        </h2>
+        <div className="flex bg-slate-100 p-1 rounded-2xl border">
+          <button onClick={() => setActiveTab('users')} className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'users' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>NHÂN SỰ</button>
+          {isSystemAdmin && (
+            <button onClick={() => setActiveTab('units')} className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'units' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>CƠ CẤU TỔ CHỨC</button>
+          )}
         </div>
       </div>
-      <div className="bg-white rounded-[50px] shadow-2xl border border-slate-100 overflow-hidden min-h-[600px] flex flex-col relative">
-          {isProcessing && <div className="absolute inset-0 bg-white/70 backdrop-blur-md z-[60] flex flex-col items-center justify-center"><Loader2 className="animate-spin text-blue-600" size={64} /></div>}
-          <div className="p-8 border-b bg-slate-50/50 flex flex-col sm:flex-row justify-between items-center gap-6">
-              <div className="flex items-center gap-4 w-full max-w-md">
-                 <div className="relative w-full">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
-                    <input type="text" placeholder="Tìm nhanh..." className="w-full bg-white border-2 border-slate-100 rounded-2xl py-3 pl-12 pr-4 outline-none focus:border-blue-500 font-bold text-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                 </div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                  <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls" onChange={handleImportUsers} />
-                  <button onClick={() => fileInputRef.current?.click()} className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-6 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 hover:bg-emerald-100"><FileSpreadsheet size={18}/> IMPORT EXCEL</button>
-                  <button onClick={() => { setEditingItem(null); setFormData(activeTab === 'users' ? { unitId: currentUser.unitId } : {}); setIsModalOpen(true); }} className="bg-blue-600 text-white px-10 py-3 rounded-2xl font-black text-[10px] tracking-widest shadow-xl flex items-center gap-2 hover:bg-blue-700"><Plus size={20}/> THÊM MỚI</button>
-              </div>
+
+      <div className="bg-white rounded-[32px] shadow-sm border overflow-hidden flex flex-col min-h-[600px]">
+        <div className="p-6 border-b bg-slate-50/50 flex flex-wrap gap-4 items-center justify-between">
+          <div className="flex gap-3 flex-1 max-w-xl">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
+              <input placeholder="Tìm nhanh nhân sự..." className="w-full pl-10 pr-4 py-2.5 bg-white border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            </div>
+            {activeTab === 'users' && isSystemAdmin && (
+              <select className="border rounded-xl px-4 text-sm bg-white outline-none" value={filterUnit} onChange={e => setFilterUnit(e.target.value)}>
+                <option value="all">Tất cả đơn vị</option>
+                {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            )}
           </div>
-          <div className="flex-1 overflow-auto bg-white">
-              {unitTree.map(root => <TreeRow key={root.id} item={root} level={0} mode={activeTab} />)}
+          
+          <div className="flex gap-2">
+            {activeTab === 'users' && (
+              <>
+                <button onClick={handleDownloadTemplate} className="px-4 py-2.5 text-blue-600 font-bold text-xs flex items-center gap-2 hover:bg-blue-50 rounded-xl transition-all"><Download size={16}/> TẢI MẪU</button>
+                <label className="px-4 py-2.5 bg-slate-800 text-white font-bold text-xs flex items-center gap-2 hover:bg-black rounded-xl cursor-pointer transition-all">
+                  <UploadCloud size={16}/> IMPORT EXCEL
+                  <input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} />
+                </label>
+              </>
+            )}
+            <button onClick={() => { setEditingItem(null); setFormData(activeTab === 'users' ? { unitId: currentUser.unitId, title: Role.STAFF } : { parentId: units[0]?.id }); setIsModalOpen(true); }} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2"><Plus size={18}/> THÊM MỚI</button>
           </div>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {activeTab === 'units' ? (
+            <div className="p-4">{unitTree.map(u => <UnitNode key={u.id} item={u} level={0} />)}</div>
+          ) : (
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest sticky top-0">
+                <tr>
+                  <th className="p-4 border-b">Họ và tên</th>
+                  <th className="p-4 border-b">Mã HRM / User</th>
+                  <th className="p-4 border-b">Chức danh</th>
+                  <th className="p-4 border-b">Đơn vị</th>
+                  <th className="p-4 border-b text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filteredUsers.map(user => (
+                  <tr key={user.id} className="hover:bg-blue-50/30 transition-colors group">
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-black border uppercase">{user.fullName.charAt(0)}</div>
+                        <div>
+                          <div className="font-bold text-slate-800">{user.fullName}</div>
+                          {user.canManageUsers && <span className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded-lg font-black uppercase tracking-tighter">SubAdmin</span>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="text-xs font-bold text-slate-400">{user.hrmCode}</div>
+                      <div className="text-blue-600 font-bold">@{user.username}</div>
+                    </td>
+                    <td className="p-4"><span className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-black text-slate-500 uppercase">{user.title}</span></td>
+                    <td className="p-4 text-xs font-medium text-slate-500">{units.find(u => u.id === user.unitId)?.name || 'N/A'}</td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100">
+                        <button onClick={() => { setEditingItem(user); setFormData(user); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600"><Edit2 size={16}/></button>
+                        {user.username !== 'admin' && <button onClick={async () => { if(confirm("Xóa nhân sự?")) { await dbClient.delete('users', user.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500"><Trash2 size={16}/></button>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
+
       {isModalOpen && (
-          <div className="fixed inset-0 z-[100] bg-slate-900/80 flex items-center justify-center p-4 backdrop-blur-xl">
-              <div className="bg-white rounded-[60px] w-full max-w-2xl shadow-2xl overflow-hidden border border-white">
-                  <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
-                      <h3 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">{editingItem ? 'CẬP NHẬT' : 'THÊM MỚI'}</h3>
-                      <button onClick={() => setIsModalOpen(false)} className="text-slate-300 hover:text-red-500 p-4"><X size={32}/></button>
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[40px] w-full max-w-xl shadow-2xl overflow-hidden border animate-zoom-in">
+            <div className="p-8 border-b bg-slate-50/50 flex justify-between items-center">
+              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{editingItem ? 'CẬP NHẬT' : 'THÊM MỚI'}</h3>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><X size={24}/></button>
+            </div>
+            <div className="p-10 space-y-6 max-h-[70vh] overflow-y-auto">
+              {activeTab === 'users' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-5">
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Họ và tên</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-700" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mã HRM</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} disabled={editingItem?.username === 'admin'} />
+                    </div>
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{editingItem ? 'Mật khẩu mới (Để trống nếu không đổi)' : 'Mật khẩu'}</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" type="password" value={formData[editingItem ? 'newPassword' : 'password'] || ''} onChange={e => setFormData({...formData, [editingItem ? 'newPassword' : 'password']: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Chức danh</label>
+                      <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}>
+                        {Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Đơn vị trực thuộc</label>
+                      <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.unitId} onChange={e => setFormData({...formData, unitId: e.target.value})}>
+                        {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <div className="p-12 space-y-8 max-h-[60vh] overflow-y-auto">
-                      {activeTab === 'users' ? (
-                        <div className="grid grid-cols-2 gap-8">
-                            <div className="col-span-2 space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Họ và tên</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50 outline-none focus:border-blue-500" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Mã HRM</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-mono text-blue-600 font-black bg-slate-50" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Username</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold text-slate-700 bg-slate-50" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} disabled={editingItem?.username === 'admin'} />
-                            </div>
-                            <div className="col-span-2 space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{editingItem ? 'Mật khẩu mới' : 'Mật khẩu'}</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 bg-slate-50" type="password" onChange={e => setFormData({...formData, [editingItem ? 'newPassword' : 'password']: e.target.value})} />
-                            </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-8">
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Tên đơn vị</label>
-                                <input className="w-full border-2 border-slate-100 rounded-3xl p-5 font-bold bg-slate-50 outline-none focus:border-blue-500" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
-                            </div>
-                        </div>
-                      )}
+                  <div className="flex items-center gap-3 p-5 bg-blue-50 rounded-[24px] border border-blue-100">
+                    <input type="checkbox" id="subAdmin" className="w-5 h-5 rounded-lg border-blue-300 text-blue-600 focus:ring-blue-500" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
+                    <label htmlFor="subAdmin" className="text-sm font-black text-blue-800 uppercase tracking-tighter cursor-pointer">Kích hoạt quyền SubAdmin (Quản trị nhân sự đơn vị)</label>
                   </div>
-                  <div className="p-12 border-t bg-slate-50/50 flex justify-end gap-6">
-                      <button onClick={() => setIsModalOpen(false)} className="px-10 py-5 text-slate-400 font-black uppercase text-xs tracking-widest">Hủy</button>
-                      <button onClick={handleSave} className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-blue-700">Lưu Firebase</button>
+                </>
+              ) : (
+                <div className="space-y-5">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tên đơn vị</label>
+                    <input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none focus:ring-2 focus:ring-blue-500" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
                   </div>
-              </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Đơn vị cha</label>
+                    <select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value || null})}>
+                      <option value="">-- VNPT Quảng Ninh (Gốc) --</option>
+                      {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-8 border-t bg-slate-50/50 flex justify-end gap-4">
+              <button onClick={() => setIsModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-xs uppercase hover:text-slate-600 transition-all">Hủy</button>
+              <button onClick={handleSave} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-700 flex items-center gap-2 transition-all">
+                {isProcessing ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} LƯU HỆ THỐNG
+              </button>
+            </div>
           </div>
+        </div>
       )}
     </div>
   );
