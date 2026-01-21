@@ -14,7 +14,6 @@ export interface Unit {
   parentId: string | null; 
   name: string;
   level: number; 
-  // Added properties to match mock data in utils/mockData.ts
   managerIds?: string[];
   address?: string;
   phone?: string;
@@ -32,6 +31,7 @@ export interface User {
   isFirstLogin: boolean;
   avatar?: string;
   canManageUsers?: boolean; // Quyền SubAdmin
+  accessibleUnitIds?: string[]; // Danh sách ID đơn vị được phép xem dữ liệu
 }
 
 export enum TaskStatus {
@@ -84,7 +84,6 @@ export interface Task {
   eOfficeNumber?: string;
   coordinationInstructions?: string; // Chỉ đạo phối hợp
   executionResults?: string; // Kết quả thực hiện (dành cho nhân sự)
-  // Added properties to match mock data in utils/mockData.ts
   type?: string;
   projectId?: string;
   createdAt?: string;
@@ -93,7 +92,7 @@ export interface Task {
 export const KPI_KEYS = {
   fiber: "Phát triển thuê bao FiberVNN",
   mytv: "Phát triển thuê bao MyTV",
-  mesh: "Phát triển thiết bị Mesh",
+  mesh: "Phát triển thiết thiết bị Mesh",
   camera: "Phát triển thiết bị Camera",
   mobile_ptm: "Thuê bao Di động PTM",
   mobile_rev: "Doanh thu di động PTM",

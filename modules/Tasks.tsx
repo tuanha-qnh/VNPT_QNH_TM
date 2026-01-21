@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Task, TaskStatus, TaskPriority, User, Unit, Role } from '../types';
-import { Plus, Search, X, Edit2, Trash2, Save, Loader2, MessageSquare, Timer, Filter, CheckCircle2, AlertTriangle, Clock, ChevronRight, History, Hash, Smartphone, MessageCircle, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, X, Edit2, Trash2, Save, Loader2, MessageSquare, Timer, Filter, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 
 interface TasksProps {
@@ -21,10 +21,13 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
   const [isProcessing, setIsProcessing] = useState(false);
   const [formData, setFormData] = useState<Partial<Task>>({
     assignmentSource: 'Direct',
-    priority: TaskPriority.MEDIUM
+    priority: TaskPriority.MEDIUM,
+    primaryAssigneeIds: [],
+    supportAssigneeIds: []
   });
 
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
+  const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
 
   const filteredTasks = useMemo(() => {
     let list = [...tasks];
@@ -32,12 +35,17 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     if (filterStatus !== 'all') list = list.filter(t => t.status === filterStatus);
     if (filterMonth) list = list.filter(t => t.dateAssigned.startsWith(filterMonth));
     
-    // Phân quyền: Lãnh đạo thấy hết, Nhân viên thấy việc mình tham gia
-    if (!isLeader && currentUser.username !== 'admin') {
-      list = list.filter(t => t.primaryAssigneeIds.includes(currentUser.id) || t.supportAssigneeIds.includes(currentUser.id));
+    // Phân quyền: Thấy việc của mình, việc của các đơn vị được cấp quyền, hoặc việc mình giao
+    if (currentUser.username !== 'admin') {
+      list = list.filter(t => 
+        t.assignerId === currentUser.id ||
+        t.primaryAssigneeIds.includes(currentUser.id) || 
+        t.supportAssigneeIds.includes(currentUser.id) ||
+        myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || '')
+      );
     }
     return list;
-  }, [tasks, searchTerm, filterStatus, filterMonth, isLeader, currentUser]);
+  }, [tasks, searchTerm, filterStatus, filterMonth, currentUser, myAccessibleUnits, users]);
 
   const statusStyle: Record<TaskStatus, string> = {
     [TaskStatus.PENDING]: 'bg-slate-100 text-slate-500',
@@ -48,7 +56,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     [TaskStatus.STUCK]: 'bg-orange-100 text-orange-600'
   };
 
-  const handleCreate = async () => {
+  const handleCreateOrUpdate = async () => {
     if (!formData.name || !formData.deadline) return alert("Vui lòng nhập tên và thời hạn.");
     setIsProcessing(true);
     const id = formData.id || `task_${Date.now()}`;
@@ -63,7 +71,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
       primaryAssigneeIds: formData.primaryAssigneeIds || [],
       supportAssigneeIds: formData.supportAssigneeIds || [],
       priority: formData.priority || TaskPriority.MEDIUM,
-      timeline: formData.timeline || [],
       assignmentSource: formData.assignmentSource || 'Direct',
       eOfficeNumber: formData.eOfficeNumber || '',
       coordinationInstructions: formData.coordinationInstructions || ''
@@ -72,26 +79,43 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     setShowForm(false);
     onRefresh();
     setIsProcessing(false);
+    if (selectedTask?.id === id) {
+        setSelectedTask(payload as Task);
+    }
   };
 
   const handleUpdateStatus = async (task: Task, newStatus: TaskStatus) => {
     await dbClient.update('tasks', task.id, { status: newStatus });
     onRefresh();
+    setSelectedTask(prev => prev ? {...prev, status: newStatus} : null);
   };
 
   const handleAddTimeline = async (task: Task) => {
     const progress = prompt("Tiến độ hiện tại (%)?", String(task.progress));
-    const comment = prompt("Nội dung cập nhật / Kết quả chi tiết?");
+    const comment = prompt("Nội dung báo cáo kết quả thực hiện?");
     if (progress !== null && comment) {
       const newTimeline = [...(task.timeline || []), { date: new Date().toISOString(), comment, progress: Number(progress) }];
       await dbClient.update('tasks', task.id, { 
         timeline: newTimeline, 
         progress: Number(progress),
-        executionResults: comment // Cập nhật kết quả mới nhất vào trường Execution Results
+        executionResults: comment 
       });
       onRefresh();
-      alert("Đã cập nhật tiến độ!");
+      setSelectedTask(prev => prev ? {...prev, timeline: newTimeline, progress: Number(progress), executionResults: comment} : null);
+      alert("Đã cập nhật báo cáo!");
     }
+  };
+
+  const approveExtension = async (task: Task) => {
+    if (!task.extensionRequest) return;
+    const newDeadline = task.extensionRequest.requestedDate;
+    await dbClient.update('tasks', task.id, { 
+      deadline: newDeadline, 
+      extensionRequest: { ...task.extensionRequest, status: 'approved' } 
+    }); 
+    onRefresh(); 
+    setSelectedTask(prev => prev ? {...prev, deadline: newDeadline, extensionRequest: {...prev.extensionRequest!, status: 'approved'}} : null);
+    alert("Đã phê duyệt gia hạn!"); 
   };
 
   return (
@@ -101,10 +125,10 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
           <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
             <Timer className="text-blue-600" size={36}/> QUẢN LÝ CÔNG VIỆC
           </h2>
-          <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">HỆ THỐNG ĐIỀU HÀNH VÀ GIÁM SÁT</p>
+          <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">VNPT Quảng Ninh - Hệ thống điều hành</p>
         </div>
         {isLeader && (
-          <button onClick={() => { setFormData({ assignmentSource: 'Direct', priority: TaskPriority.MEDIUM }); setShowForm(true); }} className="bg-blue-600 text-white px-8 py-3.5 rounded-2xl font-black text-xs uppercase shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2">
+          <button onClick={() => { setFormData({ assignmentSource: 'Direct', priority: TaskPriority.MEDIUM, primaryAssigneeIds: [], supportAssigneeIds: [] }); setShowForm(true); }} className="bg-blue-600 text-white px-8 py-3.5 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-700 transition-all flex items-center gap-2">
             <Plus size={20}/> Giao việc mới
           </button>
         )}
@@ -114,7 +138,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
         <div className="p-8 border-b bg-slate-50/50 flex flex-wrap gap-5 items-center">
           <div className="relative flex-1 min-w-[350px]">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
-            <input placeholder="Tìm tên công việc, nội dung..." className="w-full pl-12 pr-6 py-3.5 bg-white border-2 rounded-[20px] text-sm font-bold focus:border-blue-500 outline-none transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input placeholder="Tìm tên công việc..." className="w-full pl-12 pr-6 py-3.5 bg-white border-2 rounded-[20px] text-sm font-bold focus:border-blue-500 outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
           <div className="flex gap-4">
             <input type="month" className="border-2 rounded-2xl px-4 py-3 text-sm font-bold bg-white" value={filterMonth} onChange={e => setFilterMonth(e.target.value)} />
@@ -130,7 +154,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
             <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest border-b">
               <tr>
                 <th className="p-5 w-12 text-center">#</th>
-                <th className="p-5 min-w-[300px]">Nguồn & Tên công việc</th>
+                <th className="p-5 min-w-[300px]">Tên công việc</th>
                 <th className="p-5">Người giao</th>
                 <th className="p-5">Chủ trì</th>
                 <th className="p-5">Trạng thái</th>
@@ -147,41 +171,35 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                       {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> eOffice: {task.eOfficeNumber}</span>}
                       {task.assignmentSource === 'Zalo' && <span className="flex items-center gap-1 bg-green-100 text-green-700 px-2 py-0.5 rounded text-[9px] font-black"><MessageCircle size={10}/> Zalo</span>}
                       {task.assignmentSource === 'Direct' && <span className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[9px] font-black"><Smartphone size={10}/> Trực tiếp</span>}
-                      {task.extensionRequest?.status === 'pending' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-[9px] font-black animate-pulse">CHỜ DUYỆT GIA HẠN</span>}
+                      {task.extensionRequest?.status === 'pending' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-[9px] font-black animate-pulse">ĐỢI GIA HẠN</span>}
                     </div>
-                    <div className="font-black text-slate-800 text-base group-hover:text-blue-600 transition-colors">{task.name}</div>
+                    <div className="font-black text-slate-800 text-base">{task.name}</div>
                   </td>
                   <td className="p-5">
-                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">{task.dateAssigned}</div>
                     <div className="text-xs font-bold text-slate-700">{task.assignerName}</div>
                   </td>
                   <td className="p-5">
-                    <div className="flex -space-x-3">
+                    <div className="flex -space-x-2">
                       {task.primaryAssigneeIds.slice(0, 3).map(uid => (
-                        <div key={uid} className="w-9 h-9 rounded-xl bg-blue-100 border-2 border-white flex items-center justify-center text-[10px] font-black text-blue-600" title={users.find(u => u.id === uid)?.fullName}>
+                        <div key={uid} className="w-8 h-8 rounded-full bg-blue-600 border-2 border-white flex items-center justify-center text-[10px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
                           {users.find(u => u.id === uid)?.fullName.charAt(0)}
                         </div>
                       ))}
                     </div>
                   </td>
                   <td className="p-5">
-                    <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${statusStyle[task.status]}`}>
+                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${statusStyle[task.status]}`}>
                       {task.status}
                     </span>
                   </td>
                   <td className="p-5">
-                    <div className="w-32">
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="text-[10px] font-black text-slate-400 uppercase">{task.progress}%</span>
-                      </div>
-                      <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${task.progress}%` }} />
-                      </div>
+                    <div className="w-24 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600" style={{ width: `${task.progress}%` }} />
                     </div>
                   </td>
                   <td className="p-5">
-                    <div className={`flex items-center gap-2 text-xs font-black ${new Date(task.deadline) < new Date() && task.status !== TaskStatus.COMPLETED ? 'text-red-600' : 'text-slate-600'}`}>
-                      <Clock size={14}/> {task.deadline}
+                    <div className={`text-xs font-black ${new Date(task.deadline) < new Date() && task.status !== TaskStatus.COMPLETED ? 'text-red-600' : 'text-slate-600'}`}>
+                      {task.deadline}
                     </div>
                   </td>
                 </tr>
@@ -191,77 +209,72 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
         </div>
       </div>
 
-      {/* MODAL GIAO VIỆC / CHỈNH SỬA */}
       {showForm && (
         <div className="fixed inset-0 z-[100] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-[48px] w-full max-w-4xl shadow-2xl overflow-hidden border animate-zoom-in">
-            <div className="p-10 border-b bg-slate-50/50 flex justify-between items-center">
-              <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{formData.id ? 'CHỈNH SỬA CÔNG VIỆC' : 'GIAO VIỆC MỚI'}</h3>
-              <button onClick={() => setShowForm(false)} className="p-3 hover:bg-red-50 text-slate-400 rounded-full transition-all"><X size={28}/></button>
+            <div className="p-8 border-b bg-slate-50/50 flex justify-between items-center">
+              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{formData.id ? 'CHỈNH SỬA CÔNG VIỆC' : 'GIAO VIỆC MỚI'}</h3>
+              <button onClick={() => setShowForm(false)} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><X size={28}/></button>
             </div>
-            <div className="p-12 space-y-6 max-h-[75vh] overflow-y-auto">
+            <div className="p-10 space-y-6 max-h-[70vh] overflow-y-auto">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Hình thức giao việc</label>
-                  <select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none" value={formData.assignmentSource} onChange={e => setFormData({...formData, assignmentSource: e.target.value})}>
-                    <option value="Direct">Giao việc trực tiếp</option>
-                    <option value="eOffice">Trên eOffice</option>
-                    <option value="Zalo">Trên nhóm Zalo</option>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hình thức giao</label>
+                  <select className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold outline-none" value={formData.assignmentSource} onChange={e => setFormData({...formData, assignmentSource: e.target.value})}>
+                    <option value="Direct">Trực tiếp</option>
+                    <option value="eOffice">eOffice</option>
+                    <option value="Zalo">Zalo</option>
                   </select>
                 </div>
                 {formData.assignmentSource === 'eOffice' && (
-                  <div className="space-y-1.5 animate-fade-in">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Số EOFFICE</label>
-                    <input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none" placeholder="Nhập số văn bản..." value={formData.eOfficeNumber || ''} onChange={e => setFormData({...formData, eOfficeNumber: e.target.value})} />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Số eOffice</label>
+                    <input className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold outline-none" placeholder="Văn bản số..." value={formData.eOfficeNumber || ''} onChange={e => setFormData({...formData, eOfficeNumber: e.target.value})} />
                   </div>
                 )}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Độ ưu tiên</label>
-                  <select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none" value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value as TaskPriority})}>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Độ ưu tiên</label>
+                  <select className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold outline-none" value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value as TaskPriority})}>
                     {Object.values(TaskPriority).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên công việc</label>
-                <input className="w-full border-2 p-5 rounded-[24px] bg-slate-50 font-black text-slate-800 outline-none focus:border-blue-500" placeholder="Tiêu đề chính của công việc..." value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tên công việc</label>
+                <input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-black outline-none" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nội dung chỉ đạo thực hiện (Chủ trì)</label>
-                  <textarea className="w-full border-2 p-5 rounded-[24px] bg-slate-50 font-bold text-slate-600 outline-none h-32" placeholder="Chi tiết các nội dung cần thực hiện..." value={formData.content || ''} onChange={e => setFormData({...formData, content: e.target.value})} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nội dung chỉ đạo (Chủ trì)</label>
+                  <textarea className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold h-24 outline-none" value={formData.content || ''} onChange={e => setFormData({...formData, content: e.target.value})} />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nội dung chỉ đạo phối hợp</label>
-                  <textarea className="w-full border-2 p-5 rounded-[24px] bg-slate-50 font-bold text-slate-600 outline-none h-32" placeholder="Các yêu cầu dành cho nhân sự phối hợp..." value={formData.coordinationInstructions || ''} onChange={e => setFormData({...formData, coordinationInstructions: e.target.value})} />
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chỉ đạo phối hợp</label>
+                  <textarea className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold h-24 outline-none" value={formData.coordinationInstructions || ''} onChange={e => setFormData({...formData, coordinationInstructions: e.target.value})} />
                 </div>
               </div>
-              
-              <div className="grid grid-cols-2 gap-8">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Người chủ trì</label>
-                  <select multiple className="w-full border-2 p-4 rounded-[24px] bg-slate-50 font-bold text-sm h-40" value={formData.primaryAssigneeIds || []} onChange={e => setFormData({...formData, primaryAssigneeIds: Array.from(e.target.selectedOptions, (o: any) => o.value)})}>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.fullName} ({u.title})</option>)}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nhân sự chủ trì</label>
+                  <select multiple className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold h-32" value={formData.primaryAssigneeIds || []} onChange={e => setFormData({...formData, primaryAssigneeIds: Array.from(e.target.selectedOptions, (o: any) => o.value)})}>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
                   </select>
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Người phối hợp</label>
-                  <select multiple className="w-full border-2 p-4 rounded-[24px] bg-slate-50 font-bold text-sm h-40" value={formData.supportAssigneeIds || []} onChange={e => setFormData({...formData, supportAssigneeIds: Array.from(e.target.selectedOptions, (o: any) => o.value)})}>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nhân sự phối hợp</label>
+                  <select multiple className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold h-32" value={formData.supportAssigneeIds || []} onChange={e => setFormData({...formData, supportAssigneeIds: Array.from(e.target.selectedOptions, (o: any) => o.value)})}>
                     {users.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
                   </select>
                 </div>
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Hạn định hoàn thành</label>
-                <input type="date" className="w-full border-2 p-5 rounded-[24px] bg-slate-50 font-black outline-none" value={formData.deadline || ''} onChange={e => setFormData({...formData, deadline: e.target.value})} />
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hạn hoàn thành</label>
+                <input type="date" className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-black outline-none" value={formData.deadline || ''} onChange={e => setFormData({...formData, deadline: e.target.value})} />
               </div>
             </div>
-            <div className="p-10 border-t bg-slate-50/50 flex justify-end gap-5">
-              <button onClick={() => setShowForm(false)} className="px-8 py-4 text-slate-400 font-black text-xs uppercase hover:text-slate-600 transition-all">Hủy bỏ</button>
-              <button onClick={handleCreate} disabled={isProcessing} className="bg-blue-600 text-white px-16 py-5 rounded-[28px] font-black text-xs uppercase shadow-2xl hover:bg-blue-700 transition-all flex items-center gap-3">
+            <div className="p-8 border-t bg-slate-50/50 flex justify-end gap-4">
+              <button onClick={() => setShowForm(false)} className="px-8 py-3 text-slate-400 font-black text-xs uppercase">Hủy</button>
+              <button onClick={handleCreateOrUpdate} disabled={isProcessing} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-700">
                 {isProcessing ? <Loader2 className="animate-spin" /> : 'LƯU CÔNG VIỆC'}
               </button>
             </div>
@@ -269,172 +282,102 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
         </div>
       )}
 
-      {/* CHI TIẾT TƯƠNG TÁC (Side-panel) */}
       {selectedTask && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex justify-end">
           <div className="bg-white w-full max-w-2xl h-full shadow-2xl animate-slide-in flex flex-col">
-            <div className="p-10 border-b flex justify-between items-center bg-blue-600 text-white">
+            <div className="p-8 border-b flex justify-between items-center bg-blue-600 text-white">
               <div className="flex-1 pr-4">
-                <div className="text-[10px] font-black uppercase opacity-60 tracking-widest mb-1 flex items-center gap-2">
-                  <Clock size={12}/> CHI TIẾT CÔNG VIỆC #{selectedTask.id.slice(-6)}
-                </div>
-                <h3 className="text-2xl font-black truncate">{selectedTask.name}</h3>
+                <h3 className="text-xl font-black truncate">{selectedTask.name}</h3>
+                <div className="text-[9px] font-bold uppercase opacity-60 tracking-widest mt-1">Người giao: {selectedTask.assignerName}</div>
               </div>
-              <div className="flex items-center gap-2">
-                {/* Quyền sửa/xóa dành cho người giao việc */}
+              <div className="flex items-center gap-1">
                 {selectedTask.assignerId === currentUser.id && (
                   <>
-                    <button onClick={() => { setFormData(selectedTask); setShowForm(true); }} className="p-3 hover:bg-white/20 rounded-xl transition-all"><Edit2 size={24}/></button>
-                    <button onClick={async () => { if(confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', selectedTask.id); setSelectedTask(null); onRefresh(); }}} className="p-3 hover:bg-red-500 rounded-xl transition-all"><Trash2 size={24}/></button>
+                    <button onClick={() => { setFormData(selectedTask); setShowForm(true); }} className="p-2 hover:bg-white/10 rounded-lg"><Edit2 size={20}/></button>
+                    <button onClick={async () => { if(confirm("Xóa công việc này?")) { await dbClient.delete('tasks', selectedTask.id); setSelectedTask(null); onRefresh(); }}} className="p-2 hover:bg-red-500 rounded-lg"><Trash2 size={20}/></button>
                   </>
                 )}
-                <button onClick={() => setSelectedTask(null)} className="p-3 hover:bg-white/20 rounded-full transition-all"><X size={28}/></button>
+                <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-white/10 rounded-full"><X size={24}/></button>
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-10 space-y-8">
-              {/* PHẦN DUYỆT GIA HẠN (Chỉ hiện cho lãnh đạo khi có đề nghị) */}
+            <div className="flex-1 overflow-y-auto p-8 space-y-8">
               {isLeader && selectedTask.extensionRequest?.status === 'pending' && selectedTask.assignerId === currentUser.id && (
-                <div className="bg-red-50 border-2 border-red-200 p-8 rounded-[32px] animate-pulse-slow">
-                  <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={18}/> ĐỀ NGHỊ GIA HẠN THỜI GIAN</h4>
-                  <div className="bg-white p-6 rounded-2xl border-2 border-red-100 space-y-3">
-                    <p className="text-xs font-bold text-slate-700">Lý do: <span className="italic font-medium">"{selectedTask.extensionRequest.reason}"</span></p>
-                    <p className="text-xs font-black text-slate-800">Hạn cũ: {selectedTask.deadline} → <span className="text-red-600 underline">Đề xuất: {selectedTask.extensionRequest.requestedDate}</span></p>
-                    <div className="flex gap-3 pt-2">
-                      <button onClick={async () => { 
-                        await dbClient.update('tasks', selectedTask.id, { 
-                          deadline: selectedTask.extensionRequest!.requestedDate, 
-                          extensionRequest: { ...selectedTask.extensionRequest!, status: 'approved' } 
-                        }); 
-                        onRefresh(); 
-                        setSelectedTask(prev => prev ? {...prev, deadline: prev.extensionRequest!.requestedDate, extensionRequest: {...prev.extensionRequest!, status: 'approved'}} : null);
-                        alert("Đã phê duyệt gia hạn!"); 
-                      }} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-black text-[10px] uppercase">CHẤP THUẬN</button>
-                      <button onClick={async () => { 
-                        await dbClient.update('tasks', selectedTask.id, { 
-                          extensionRequest: { ...selectedTask.extensionRequest!, status: 'rejected' } 
-                        }); 
-                        onRefresh(); 
-                        setSelectedTask(prev => prev ? {...prev, extensionRequest: {...prev.extensionRequest!, status: 'rejected'}} : null);
-                      }} className="flex-1 bg-slate-200 text-slate-600 py-3 rounded-xl font-black text-[10px] uppercase">TỪ CHỐI</button>
+                <div className="bg-red-50 border-2 border-red-200 p-6 rounded-[28px] space-y-4">
+                  <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><AlertTriangle size={16}/> ĐỀ NGHỊ GIA HẠN</h4>
+                  <div className="bg-white p-4 rounded-xl border border-red-100 text-xs font-bold space-y-2">
+                    <p>Lý do: <span className="italic">"{selectedTask.extensionRequest.reason}"</span></p>
+                    <p>Đề xuất hạn mới: <span className="text-red-600 underline font-black">{selectedTask.extensionRequest.requestedDate}</span></p>
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => approveExtension(selectedTask)} className="flex-1 bg-green-600 text-white py-2 rounded-lg font-black uppercase text-[9px]">Duyệt</button>
+                      <button onClick={async () => { await dbClient.update('tasks', selectedTask.id, { extensionRequest: { ...selectedTask.extensionRequest!, status: 'rejected' } }); onRefresh(); setSelectedTask(null); }} className="flex-1 bg-slate-200 text-slate-600 py-2 rounded-lg font-black uppercase text-[9px]">Từ chối</button>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="bg-slate-50 p-6 rounded-3xl border">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Chỉ đạo Chủ trì:</h4>
-                  <p className="text-sm font-bold text-slate-700 leading-relaxed whitespace-pre-line">{selectedTask.content}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-5 rounded-2xl border">
+                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Chỉ đạo (Chủ trì)</h4>
+                  <p className="text-sm font-bold text-slate-700 whitespace-pre-line">{selectedTask.content}</p>
                 </div>
-                <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-100">
-                  <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-3">Chỉ đạo Phối hợp:</h4>
-                  <p className="text-sm font-bold text-blue-700 leading-relaxed whitespace-pre-line">{selectedTask.coordinationInstructions || 'Không có chỉ đạo phối hợp riêng.'}</p>
+                <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
+                  <h4 className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-2">Chỉ đạo (Phối hợp)</h4>
+                  <p className="text-sm font-bold text-blue-700 whitespace-pre-line">{selectedTask.coordinationInstructions || 'N/A'}</p>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={16}/> Kết quả thực hiện</h4>
-                <div className="bg-slate-50 border-2 rounded-3xl p-6 min-h-[100px] text-slate-700 font-bold text-sm whitespace-pre-line">
-                  {selectedTask.executionResults || 'Chưa có báo cáo kết quả thực hiện.'}
+              <div className="space-y-3">
+                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={14}/> Kết quả thực hiện</h4>
+                <div className="bg-slate-50 border-2 rounded-2xl p-4 text-slate-700 font-bold text-sm min-h-[80px]">
+                  {selectedTask.executionResults || 'Chưa có báo cáo kết quả.'}
                 </div>
-                {!isLeader && (selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && (
-                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-blue-700 transition-all">
-                     <Edit2 size={14}/> Cập nhật kết quả & Tiến độ
+                {(selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && (
+                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase">
+                     Báo cáo kết quả & Tiến độ
                    </button>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-8 pt-4">
-                <div className="space-y-2">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trạng thái công việc</h4>
-                  <select 
-                    className={`w-full p-4 rounded-2xl text-xs font-black uppercase tracking-widest border-2 ${statusStyle[selectedTask.status]}`}
-                    value={selectedTask.status}
-                    onChange={(e) => handleUpdateStatus(selectedTask, e.target.value as TaskStatus)}
-                    disabled={!isLeader && !selectedTask.primaryAssigneeIds.includes(currentUser.id)}
-                  >
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <h4 className="text-[9px] font-black text-slate-400 uppercase">Trạng thái</h4>
+                  <select className={`w-full p-3 rounded-xl text-[10px] font-black uppercase border-2 ${statusStyle[selectedTask.status]}`} value={selectedTask.status} onChange={(e) => handleUpdateStatus(selectedTask, e.target.value as TaskStatus)} disabled={selectedTask.assignerId !== currentUser.id && !selectedTask.primaryAssigneeIds.includes(currentUser.id)}>
                     {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                <div className="space-y-2">
-                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tiến độ hiện tại</h4>
-                   <div className="flex items-center gap-4">
-                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-600" style={{ width: `${selectedTask.progress}%` }} />
-                      </div>
-                      <span className="font-black text-blue-600 text-lg">{selectedTask.progress}%</span>
+                <div className="space-y-1">
+                   <h4 className="text-[9px] font-black text-slate-400 uppercase">Tiến độ</h4>
+                   <div className="flex items-center gap-3">
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full"><div className="h-full bg-blue-600" style={{ width: `${selectedTask.progress}%` }} /></div>
+                      <span className="font-black text-blue-600 text-xs">{selectedTask.progress}%</span>
                    </div>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><MessageSquare size={16}/> Báo cáo vướng mắc (Nếu có)</h4>
-                <textarea 
-                  className="w-full border-2 rounded-[24px] p-6 text-sm font-bold bg-slate-50 outline-none focus:border-orange-500 min-h-[120px] transition-all"
-                  placeholder="Ghi nhận các vướng mắc, khó khăn cần hỗ trợ..."
-                  defaultValue={selectedTask.difficulties}
-                  onBlur={async (e) => {
-                    await dbClient.update('tasks', selectedTask.id, { difficulties: e.target.value });
-                    onRefresh();
-                  }}
-                  disabled={!isLeader && !selectedTask.primaryAssigneeIds.includes(currentUser.id)}
-                />
-              </div>
-
-              {/* KHU VỰC GIA HẠN (Chỉ dành cho nhân sự được giao việc) */}
-              {!isLeader && (selectedTask.primaryAssigneeIds.includes(currentUser.id)) && (
-                <div className="bg-red-50 p-8 rounded-[40px] border-2 border-red-100 space-y-6">
-                  <div>
-                    <h4 className="text-xs font-black text-red-600 uppercase tracking-widest flex items-center gap-2">
-                      <Timer size={18}/> ĐỀ NGHỊ GIA HẠN DEADLINE
-                    </h4>
-                    <p className="text-[10px] font-bold text-red-400 uppercase mt-1">Yêu cầu sẽ được gửi tới Lãnh đạo giao việc duyệt</p>
-                  </div>
-                  
+              {!isLeader && selectedTask.primaryAssigneeIds.includes(currentUser.id) && (
+                <div className="bg-red-50 p-6 rounded-[32px] border-2 border-red-100 space-y-4">
+                  <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><Timer size={16}/> ĐỀ NGHỊ GIA HẠN</h4>
                   {selectedTask.extensionRequest?.status === 'pending' ? (
-                    <div className="bg-white p-6 rounded-2xl border-2 border-red-100 text-center">
-                       <span className="text-red-500 font-black text-[10px] uppercase animate-pulse tracking-widest">Đang chờ Lãnh đạo phê duyệt...</span>
-                    </div>
+                    <div className="text-center py-2"><span className="text-red-500 font-black text-[10px] uppercase animate-pulse">Đang đợi lãnh đạo phê duyệt...</span></div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Ngày mong muốn gia hạn đến</label>
-                          <input id="extDate" type="date" className="w-full border-2 p-4 rounded-xl font-black text-sm outline-none focus:border-red-400" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Lý do đề nghị gia hạn</label>
-                          <textarea id="extReason" className="w-full border-2 p-4 rounded-xl font-bold text-sm outline-none focus:border-red-400 h-24" placeholder="Giải trình lý do chưa hoàn thành đúng hạn..." />
-                        </div>
-                      </div>
+                    <div className="space-y-3">
+                      <input id="extDate" type="date" className="w-full border p-3 rounded-xl font-black text-xs" />
+                      <textarea id="extReason" className="w-full border p-3 rounded-xl font-bold text-xs h-20" placeholder="Lý do gia hạn..." />
                       <button onClick={async () => {
-                        const dateEl = document.getElementById('extDate') as HTMLInputElement;
-                        const reasonEl = document.getElementById('extReason') as HTMLTextAreaElement;
-                        const date = dateEl.value;
-                        const reason = reasonEl.value;
-                        if(!date || !reason) return alert("Vui lòng điền đầy đủ ngày và lý do!");
-                        
-                        await dbClient.update('tasks', selectedTask.id, { 
-                          extensionRequest: { 
-                            requestedDate: date, 
-                            reason, 
-                            status: 'pending', 
-                            requestDate: new Date().toISOString() 
-                          } 
-                        });
-                        onRefresh();
-                        setSelectedTask(prev => prev ? {...prev, extensionRequest: { requestedDate: date, reason, status: 'pending', requestDate: new Date().toISOString() }} : null);
-                        alert("Đã gửi đề nghị gia hạn!");
-                      }} className="w-full py-4 bg-red-600 text-white rounded-[20px] font-black text-[10px] uppercase tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all">Gửi đề nghị phê duyệt</button>
+                        const date = (document.getElementById('extDate') as HTMLInputElement).value;
+                        const reason = (document.getElementById('extReason') as HTMLTextAreaElement).value;
+                        if(!date || !reason) return alert("Vui lòng điền đủ ngày và lý do!");
+                        await dbClient.update('tasks', selectedTask.id, { extensionRequest: { requestedDate: date, reason, status: 'pending', requestDate: new Date().toISOString() } });
+                        onRefresh(); setSelectedTask(null); alert("Đã gửi đề nghị!");
+                      }} className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-red-100">Gửi đề nghị gia hạn</button>
                     </div>
                   )}
                 </div>
               )}
             </div>
-
-            <div className="p-10 border-t bg-slate-50 flex justify-end">
-              <button onClick={() => setSelectedTask(null)} className="bg-slate-800 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all active:scale-95">Đóng cửa sổ</button>
+            <div className="p-8 border-t bg-slate-50 flex justify-end">
+              <button onClick={() => setSelectedTask(null)} className="bg-slate-800 text-white px-10 py-3 rounded-xl font-black text-xs uppercase">Đóng</button>
             </div>
           </div>
         </div>
