@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { Unit, User, Role } from '../types';
-import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye } from 'lucide-react';
+// Added Info to imports from lucide-react
+import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye, UserPlus, Users2, Info } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
 import md5 from 'md5';
@@ -22,12 +23,14 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   const [filterUnit, setFilterUnit] = useState('all');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // PHÂN QUYỀN: Chỉ tài khoản 'admin' là Admin hệ thống cao nhất
   const isSystemAdmin = currentUser.username === 'admin';
   const isSubAdmin = currentUser.canManageUsers === true;
   const canModify = isSystemAdmin || isSubAdmin;
 
   const filteredUsers = useMemo(() => {
     let list = users;
+    // SubAdmin chỉ thấy nhân sự trong đơn vị của mình (và các đơn vị con nếu cần)
     if (!isSystemAdmin && isSubAdmin) {
       list = users.filter(u => u.unitId === currentUser.unitId);
     } else if (!isSystemAdmin && !isSubAdmin) {
@@ -53,7 +56,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   const handleDownloadTemplate = () => {
     if (!canModify) return;
     const data = [
-      { "Họ và tên": "Nguyễn Văn A", "Mã HRM": "12345", "Username": "anv", "Mật khẩu": "123", "Chức danh": "Nhân viên", "Mã đơn vị": "QNH001", "SubAdmin (Yes/No)": "No" }
+      { "Họ và tên": "Nguyễn Văn A", "Mã HRM": "12345", "Username": "anv", "Mật khẩu": "123", "Chức danh": "Nhân viên", "Mã đơn vị": "QNH001" }
     ];
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -85,7 +88,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           const id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
           await dbClient.upsert('users', id, {
             hrmCode, fullName: row["Họ và tên"] || username, username, password: md5(String(row["Mật khẩu"] || '123')),
-            title: row["Chức danh"] || Role.STAFF, unitId: unitIdToAssign, isFirstLogin: true, canManageUsers: String(row["SubAdmin (Yes/No)"]).toLowerCase() === 'yes',
+            title: row["Chức danh"] || Role.STAFF, unitId: unitIdToAssign, isFirstLogin: true, canManageUsers: false,
             accessibleUnitIds: [unitIdToAssign]
           });
           success++;
@@ -101,18 +104,26 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   const handleSave = async () => {
     if (!canModify) return;
     if (activeTab === 'users' && (!formData.fullName || !formData.hrmCode || !formData.username)) return alert("Vui lòng nhập đầy đủ thông tin.");
+    
     setIsProcessing(true);
     try {
       const id = editingItem?.id || (activeTab === 'users' ? `user_${Date.now()}` : `unit_${Date.now()}`);
+      
       if (activeTab === 'units') {
         const parentId = formData.parentId || units.find(u => u.code === 'VNPT_QN')?.id || null;
         await dbClient.upsert('units', id, { ...formData, code: editingItem ? formData.code : `QNH${Math.floor(Math.random() * 900) + 100}`, parentId, level: parentId ? 1 : 0 });
       } else {
         const finalUnitId = (isSubAdmin && !isSystemAdmin) ? currentUser.unitId : (formData.unitId || currentUser.unitId);
+        
+        // Logic bảo mật: Chỉ System Admin mới được thay đổi canManageUsers
+        const canManageUsersValue = isSystemAdmin ? (formData.canManageUsers || false) : (editingItem ? editingItem.canManageUsers : false);
+
         const payload = {
-          ...formData, unitId: finalUnitId,
-          password: formData.newPassword ? md5(formData.newPassword) : (editingItem ? formData.password : md5(formData.password || '123')),
-          accessibleUnitIds: formData.accessibleUnitIds || [finalUnitId]
+          ...formData, 
+          unitId: finalUnitId,
+          canManageUsers: canManageUsersValue,
+          password: formData.newPassword ? md5(formData.newPassword) : (editingItem ? editingItem.password : md5(formData.password || '123')),
+          accessibleUnitIds: formData.accessibleUnitIds && formData.accessibleUnitIds.length > 0 ? formData.accessibleUnitIds : [finalUnitId]
         };
         delete payload.newPassword;
         await dbClient.upsert('users', id, payload);
@@ -184,7 +195,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                 <UploadCloud size={16}/> IMPORT EXCEL
                 <input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} />
               </label>
-              <button onClick={() => { setEditingItem(null); setFormData({ unitId: currentUser.unitId, title: Role.STAFF, accessibleUnitIds: [currentUser.unitId] }); setIsModalOpen(true); }} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg flex items-center gap-2"><Plus size={18}/> THÊM MỚI</button>
+              <button onClick={() => { setEditingItem(null); setFormData({ unitId: currentUser.unitId, title: Role.STAFF, accessibleUnitIds: [currentUser.unitId], canManageUsers: false }); setIsModalOpen(true); }} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg flex items-center gap-2"><Plus size={18}/> THÊM MỚI</button>
             </div>
           )}
         </div>
@@ -226,9 +237,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                     <td className="p-4 text-xs text-slate-400">{units.find(u => u.id === user.unitId)?.name || 'N/A'}</td>
                     <td className="p-4 text-right">
                       {(isSystemAdmin || (isSubAdmin && user.unitId === currentUser.unitId)) && (
-                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100">
-                          <button onClick={() => { setEditingItem(user); setFormData({ ...user, accessibleUnitIds: user.accessibleUnitIds || [user.unitId] }); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600"><Edit2 size={16}/></button>
-                          {user.username !== 'admin' && <button onClick={async () => { if(confirm("Xóa nhân sự này?")) { await dbClient.delete('users', user.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500"><Trash2 size={16}/></button>}
+                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => { setEditingItem(user); setFormData({ ...user, accessibleUnitIds: user.accessibleUnitIds || [user.unitId] }); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Chỉnh sửa"><Edit2 size={16}/></button>
+                          {user.username !== 'admin' && <button onClick={async () => { if(confirm("Xóa nhân sự này?")) { await dbClient.delete('users', user.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16}/></button>}
                         </div>
                       )}
                     </td>
@@ -286,11 +297,24 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                   </select>
                 </div>
               </div>
+              
               <div className="p-6 bg-blue-50 rounded-[28px] border border-blue-100 space-y-4">
-                <div className="flex items-center gap-3 pb-3 border-b border-blue-100">
-                  <input type="checkbox" id="subAdmin" className="w-5 h-5 rounded-lg text-blue-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
-                  <label htmlFor="subAdmin" className="text-sm font-black text-blue-800 uppercase tracking-tighter cursor-pointer">Cấp quyền SubAdmin (Quản trị nhân sự đơn vị)</label>
-                </div>
+                {/* QUAN TRỌNG: Chỉ Admin hệ thống mới có thể quản lý quyền SubAdmin */}
+                {isSystemAdmin && (
+                  <div className="flex items-center gap-3 pb-3 border-b border-blue-100">
+                    <input type="checkbox" id="subAdmin" className="w-5 h-5 rounded-lg text-blue-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
+                    <label htmlFor="subAdmin" className="text-sm font-black text-blue-800 uppercase tracking-tighter cursor-pointer flex items-center gap-2">
+                       <ShieldCheck size={16}/> Cấp quyền SubAdmin (Quản trị đơn vị)
+                    </label>
+                  </div>
+                )}
+
+                {!isSystemAdmin && isSubAdmin && editingItem?.id === currentUser.id && (
+                   <div className="p-3 bg-white/50 rounded-xl border border-blue-200 text-[10px] font-bold text-blue-600 uppercase flex items-center gap-2">
+                      <Info size={14}/> Bạn không thể tự thay đổi quyền SubAdmin của chính mình.
+                   </div>
+                )}
+                
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 text-blue-700 font-black text-[10px] uppercase tracking-widest">
                     <Eye size={14}/> Phân quyền xem dữ liệu đa đơn vị
