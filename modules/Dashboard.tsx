@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { Task, TaskStatus, Unit, User, KPI_KEYS, Role, KPIKey } from '../types';
-import { AlertCircle, CheckCircle, Clock, List, BarChart2, TrendingUp, DollarSign, Activity, Users, Zap, Briefcase, Calendar as CalendarIcon } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, List, BarChart2, TrendingUp, DollarSign, Activity, Users, Zap, Briefcase, Calendar as CalendarIcon, Smartphone } from 'lucide-react';
 
 interface DashboardProps {
   tasks: Task[];
@@ -34,13 +34,11 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
   // 2. Thống kê công việc cá nhân hóa
   const myTasks = useMemo(() => {
     if (isLeader || currentUser.username === 'admin') {
-      // Lãnh đạo thấy việc của đơn vị mình
       return tasks.filter(t => {
         const assigner = users.find(u => u.id === t.assignerId);
         return assigner?.unitId === currentUser.unitId || currentUser.username === 'admin';
       });
     }
-    // Nhân viên thấy việc được giao
     return tasks.filter(t => t.primaryAssigneeIds.includes(currentUser.id) || t.supportAssigneeIds.includes(currentUser.id));
   }, [tasks, isLeader, currentUser, users]);
 
@@ -77,12 +75,12 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
           <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-2xl transition-all duration-500">
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full -mr-12 -mt-12 transition-all group-hover:scale-125" />
-            <DollarSign className="text-blue-600 mb-6" size={40}/>
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Doanh thu VT-CNTT</div>
-            <div className="text-3xl font-black text-slate-800 mt-2">{(provinceKpi.revenue?.actual || 0).toLocaleString()} <span className="text-xs text-slate-400">VNĐ</span></div>
+            <Smartphone className="text-blue-600 mb-6" size={40}/>
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Doanh thu Di động PTM</div>
+            <div className="text-3xl font-black text-slate-800 mt-2">{(provinceKpi.mobile_rev?.actual || 0).toLocaleString()} <span className="text-xs text-slate-400">VNĐ</span></div>
             <div className="mt-6 flex items-center justify-between">
               <span className="text-[10px] font-black text-slate-400 uppercase">Hoàn thành:</span>
-              <span className="text-lg font-black text-blue-600">{provinceKpi.revenue?.percent}%</span>
+              <span className="text-lg font-black text-blue-600">{provinceKpi.mobile_rev?.percent}%</span>
             </div>
           </div>
           <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-2xl transition-all duration-500">
@@ -99,7 +97,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
             <div className="absolute bottom-0 right-0 w-64 h-64 bg-white/5 rounded-full -mb-32 -mr-32" />
             <h4 className="text-white text-[10px] font-black uppercase tracking-[0.2em] mb-6 opacity-60">Thống kê chỉ tiêu trọng điểm</h4>
             <div className="grid grid-cols-2 gap-x-12 gap-y-4">
-              {['mytv', 'mesh', 'camera', 'mobile_ptm'].map(k => (
+              {['mytv', 'mesh', 'camera', 'revenue'].map(k => (
                 <div key={k} className="flex justify-between items-center border-b border-white/10 pb-2.5">
                   <span className="text-[10px] text-white/80 font-black uppercase truncate pr-4">{KPI_KEYS[k as KPIKey]}</span>
                   <span className="text-base font-black text-blue-400">{provinceKpi[k]?.percent}%</span>
@@ -167,7 +165,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
           <div className="bg-white p-10 rounded-[48px] shadow-sm border border-slate-100 flex flex-col items-center justify-center relative overflow-hidden">
             <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-[0.2em] mb-10 text-center">Tỷ lệ hoàn thành mục tiêu</h4>
             <div className="relative w-56 h-56">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={100}>
                 <PieChart>
                   <Pie 
                     data={[

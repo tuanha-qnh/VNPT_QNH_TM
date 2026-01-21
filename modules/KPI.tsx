@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { User, Unit, KPI_KEYS, KPIKey, Role, KPIRecord } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie } from 'recharts';
-import { Database, RefreshCw, Settings as SettingsIcon, Users, CheckCircle, PieChart as PieChartIcon, AlertOctagon, Download, Filter, Zap, Loader2 } from 'lucide-react';
+import { Database, RefreshCw, Settings as SettingsIcon, Users, CheckCircle, PieChart as PieChartIcon, AlertOctagon, Download, Filter, Zap, Loader2, Table, ChevronRight, Import } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
 
@@ -19,7 +19,15 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [filterKey, setFilterKey] = useState<KPIKey>('fiber');
   const [kpiRecords, setKpiRecords] = useState<KPIRecord[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [dsConfig, setDsConfig] = useState<any>(() => JSON.parse(localStorage.getItem(`ds_config_${mode}`) || '{"url":"", "mapping":{}, "autoSync":false}'));
+  const [isReading, setIsReading] = useState(false);
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<any[]>([]);
+
+  // Config riêng biệt cho mode hiện tại (lưu vào localStorage với key mode)
+  const [dsConfig, setDsConfig] = useState<any>(() => {
+    const saved = localStorage.getItem(`ds_config_v2_${mode}`);
+    return saved ? JSON.parse(saved) : { url: "", mapping: {}, autoSync: false };
+  });
 
   const isAdmin = currentUser.username === 'admin';
 
@@ -33,25 +41,64 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
 
   useEffect(() => { fetchKpis(); }, [fetchKpis]);
 
-  // Tự động đồng bộ mỗi 10 phút
+  // Tự động đồng bộ mỗi 10 phút (nếu bật)
   useEffect(() => {
     let timer: any;
-    if (dsConfig.autoSync && dsConfig.url) {
-      timer = setInterval(() => handleSync(), 600000);
+    if (dsConfig.autoSync && dsConfig.url && dsConfig.mapping.id) {
+      timer = setInterval(() => handleSync(true), 600000);
     }
     return () => clearInterval(timer);
   }, [dsConfig, selectedMonth]);
 
-  const handleSync = async () => {
-    if (!dsConfig.url) return alert("Vui lòng cấu hình URL Google Sheet CSV!");
-    setIsSyncing(true);
+  const handleReadData = async () => {
+    if (!dsConfig.url) return alert("Vui lòng nhập URL Google Sheet CSV!");
+    setIsReading(true);
     try {
       const res = await fetch(dsConfig.url);
       const csv = await res.text();
       const wb = XLSX.read(csv, { type: 'string' });
-      const raw: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-      
-      for (const row of raw) {
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw: any[] = XLSX.utils.sheet_to_json(ws);
+      if (raw.length > 0) {
+        setAvailableColumns(Object.keys(raw[0]));
+        setRawRows(raw);
+        alert(`Đã đọc ${raw.length} dòng dữ liệu. Vui lòng kiểm tra Mapping bên dưới.`);
+      } else {
+        alert("File không có dữ liệu!");
+      }
+    } catch (e) { 
+      console.error("Read error:", e); 
+      alert("Lỗi khi đọc file. Kiểm tra xem link đã được chia sẻ Public và có đúng định dạng CSV chưa.");
+    }
+    finally { setIsReading(false); }
+  };
+
+  const handleSync = async (isAuto = false) => {
+    let rowsToProcess = rawRows;
+    if (isAuto || rowsToProcess.length === 0) {
+      if (!dsConfig.url) return;
+      setIsSyncing(true);
+      try {
+        const res = await fetch(dsConfig.url);
+        const csv = await res.text();
+        const wb = XLSX.read(csv, { type: 'string' });
+        rowsToProcess = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+      } catch (e) { 
+        console.error("Sync error:", e); 
+        setIsSyncing(false);
+        return;
+      }
+    }
+
+    if (!dsConfig.mapping.id) {
+      if (!isAuto) alert("Chưa thiết lập cột Định danh!");
+      setIsSyncing(false);
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      for (const row of rowsToProcess) {
         const entityId = String(row[dsConfig.mapping.id] || '');
         if (!entityId) continue;
         
@@ -72,7 +119,11 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
         });
       }
       fetchKpis();
-    } catch (e) { console.error("Sync error:", e); }
+      if (!isAuto) alert("Đồng bộ dữ liệu thành công!");
+    } catch (e) { 
+      console.error("Final sync error:", e); 
+      if (!isAuto) alert("Lỗi khi ghi dữ liệu vào Firebase.");
+    }
     finally { setIsSyncing(false); }
   };
 
@@ -177,49 +228,108 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           </div>
         </div>
       ) : (
-        <div className="bg-white rounded-[48px] shadow-sm border p-12 max-w-3xl mx-auto space-y-8 animate-zoom-in">
+        <div className="bg-white rounded-[48px] shadow-sm border p-12 max-w-4xl mx-auto space-y-8 animate-zoom-in">
           <div className="flex items-center gap-6 border-b pb-8">
             <div className="bg-blue-600 p-5 rounded-[32px] text-white shadow-2xl"><Database size={40}/></div>
             <div>
-              <h3 className="text-2xl font-black text-slate-800">Cấu hình Google Sheet Sync</h3>
+              <h3 className="text-2xl font-black text-slate-800">Cấu hình Google Sheet Sync (Mode: {mode === 'group' ? 'Tập thể' : 'Cá nhân'})</h3>
               <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Cloud Automation Engine</p>
             </div>
           </div>
           <div className="space-y-8">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Đường dẫn CSV Public</label>
-              <input className="w-full border-2 p-5 rounded-[24px] bg-slate-50 font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv" value={dsConfig.url} onChange={e => setDsConfig({...dsConfig, url: e.target.value})} />
-            </div>
-            <div className="bg-blue-50 p-8 rounded-[36px] border-2 border-blue-100 space-y-6">
-              <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest mb-2 flex items-center gap-2"><Filter size={16}/> Thiết lập Ánh xạ cột (Mapping)</h4>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-                <div className="col-span-2 space-y-1.5">
-                  <label className="text-[9px] font-black text-blue-400 uppercase">Cột Định danh (HRM/Unit Code)</label>
-                  <input className="w-full border-2 p-3 rounded-xl font-bold text-xs" placeholder="VD: Ma_Don_Vi" value={dsConfig.mapping.id} onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, id: e.target.value}})} />
-                </div>
-                {Object.keys(KPI_KEYS).map(k => (
-                  <React.Fragment key={k}>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-blue-400 uppercase">{k} - Kế hoạch</label>
-                      <input className="w-full border-2 p-3 rounded-xl font-bold text-xs" value={dsConfig.mapping[`${k}_t`]} onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, [`${k}_t`]: e.target.value}})} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-blue-400 uppercase">{k} - Thực hiện</label>
-                      <input className="w-full border-2 p-3 rounded-xl font-bold text-xs" value={dsConfig.mapping[`${k}_a`]} onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, [`${k}_a`]: e.target.value}})} />
-                    </div>
-                  </React.Fragment>
-                ))}
+            {/* Step 1: Input URL and Read */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-black text-xs">1</div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nhập Link CSV Public của Google Sheet</label>
+              </div>
+              <div className="flex gap-4">
+                <input 
+                  className="flex-1 border-2 p-5 rounded-[24px] bg-slate-50 font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-all" 
+                  placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv" 
+                  value={dsConfig.url} 
+                  onChange={e => setDsConfig({...dsConfig, url: e.target.value})} 
+                />
+                <button 
+                  onClick={handleReadData} 
+                  disabled={isReading || !dsConfig.url} 
+                  className="bg-slate-800 text-white px-8 py-4 rounded-[20px] font-black text-xs uppercase shadow-xl hover:bg-black flex items-center gap-3 disabled:opacity-50"
+                >
+                  {isReading ? <Loader2 className="animate-spin" size={18}/> : <Table size={18}/>} Đọc dữ liệu
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-4 p-6 bg-slate-50 rounded-[24px] border-2">
-              <input type="checkbox" id="auto" className="w-6 h-6 rounded-lg" checked={dsConfig.autoSync} onChange={e => setDsConfig({...dsConfig, autoSync: e.target.checked})} />
-              <label htmlFor="auto" className="text-sm font-black text-slate-700 cursor-pointer">Kích hoạt đồng bộ tự động 10 phút/lần</label>
-            </div>
-            <div className="flex justify-end gap-5 pt-4">
-              <button onClick={() => { localStorage.setItem(`ds_config_${mode}`, JSON.stringify(dsConfig)); alert("Đã lưu cấu hình."); }} className="px-8 py-4 font-black text-slate-400 hover:text-slate-800 transition-colors uppercase text-xs">Lưu cấu hình</button>
-              <button onClick={handleSync} disabled={isSyncing} className="bg-blue-600 text-white px-12 py-4 rounded-[20px] font-black text-xs uppercase shadow-2xl hover:bg-blue-700 flex items-center gap-3 transition-all">
-                {isSyncing ? <Loader2 className="animate-spin" size={18}/> : <RefreshCw size={18}/>} Đồng bộ Cloud ngay
-              </button>
+            
+            {/* Step 2: Mapping Configuration (Only if columns are available) */}
+            {availableColumns.length > 0 && (
+              <div className="bg-blue-50 p-8 rounded-[36px] border-2 border-blue-100 space-y-6 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest flex items-center gap-2"><Filter size={16}/> 2. Thiết lập Ánh xạ cột (Mapping)</h4>
+                  <span className="text-[9px] font-bold text-blue-400">Đã đọc được {availableColumns.length} cột</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-6">
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[9px] font-black text-blue-400 uppercase">Cột Định danh ({mode === 'personal' ? 'Mã HRM' : 'Mã Đơn vị'})</label>
+                    <select 
+                      className="w-full border-2 p-3 rounded-xl font-bold text-xs bg-white outline-none" 
+                      value={dsConfig.mapping.id || ""} 
+                      onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, id: e.target.value}})}
+                    >
+                      <option value="">-- Chọn cột --</option>
+                      {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                    </select>
+                  </div>
+                  {Object.keys(KPI_KEYS).map(k => (
+                    <React.Fragment key={k}>
+                      <div className="space-y-1.5 border-l-4 border-blue-200 pl-4">
+                        <label className="text-[9px] font-black text-blue-400 uppercase">{KPI_KEYS[k as KPIKey]} (Kế hoạch)</label>
+                        <select 
+                          className="w-full border-2 p-3 rounded-xl font-bold text-xs bg-white outline-none" 
+                          value={dsConfig.mapping[`${k}_t`] || ""} 
+                          onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, [`${k}_t`]: e.target.value}})}
+                        >
+                          <option value="">-- Chọn cột --</option>
+                          {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5 border-l-4 border-green-200 pl-4">
+                        <label className="text-[9px] font-black text-blue-400 uppercase">{KPI_KEYS[k as KPIKey]} (Thực hiện)</label>
+                        <select 
+                          className="w-full border-2 p-3 rounded-xl font-bold text-xs bg-white outline-none" 
+                          value={dsConfig.mapping[`${k}_a`] || ""} 
+                          onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, [`${k}_a`]: e.target.value}})}
+                        >
+                          <option value="">-- Chọn cột --</option>
+                          {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                        </select>
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Options and Final Sync */}
+            <div className="flex flex-col gap-6">
+              <div className="flex items-center gap-4 p-6 bg-slate-50 rounded-[24px] border-2">
+                <input type="checkbox" id="auto" className="w-6 h-6 rounded-lg" checked={dsConfig.autoSync} onChange={e => setDsConfig({...dsConfig, autoSync: e.target.checked})} />
+                <label htmlFor="auto" className="text-sm font-black text-slate-700 cursor-pointer">Tự động đồng bộ mỗi 10 phút (Sử dụng Mapping đã lưu)</label>
+              </div>
+              <div className="flex justify-end gap-5">
+                <button 
+                  onClick={() => { localStorage.setItem(`ds_config_v2_${mode}`, JSON.stringify(dsConfig)); alert("Đã lưu cấu hình mapping."); }} 
+                  className="px-8 py-4 font-black text-slate-400 hover:text-slate-800 transition-colors uppercase text-xs"
+                >
+                  Lưu cấu hình
+                </button>
+                <button 
+                  onClick={() => handleSync(false)} 
+                  disabled={isSyncing || !dsConfig.mapping.id} 
+                  className="bg-blue-600 text-white px-12 py-4 rounded-[20px] font-black text-xs uppercase shadow-2xl hover:bg-blue-700 flex items-center gap-3 transition-all disabled:opacity-50"
+                >
+                  {isSyncing ? <Loader2 className="animate-spin" size={18}/> : <Import size={18}/>} Thực hiện Import vào Firebase
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,3 +1,4 @@
+
 import { User, Unit, Task, TaskStatus, TaskPriority, Role, KPI_KEYS } from '../types';
 
 // Initial Mock Data
@@ -31,6 +32,9 @@ const initialTasks: Task[] = [
     type: 'Project',
     projectId: 'PRJ-001',
     assignerId: 'usr1',
+    // Added missing assignerName and dateAssigned properties
+    assignerName: 'Nguyễn Văn A',
+    dateAssigned: new Date().toISOString().split('T')[0],
     primaryAssigneeIds: ['usr2'],
     supportAssigneeIds: ['usr4'],
     deadline: new Date(Date.now() + 86400000 * 5).toISOString(),
@@ -45,6 +49,9 @@ const initialTasks: Task[] = [
     content: 'Tổng hợp số liệu từ các đơn vị',
     type: 'Single',
     assignerId: 'usr3',
+    // Added missing assignerName and dateAssigned properties
+    assignerName: 'Lê Văn C',
+    dateAssigned: new Date().toISOString().split('T')[0],
     primaryAssigneeIds: ['usr4'],
     supportAssigneeIds: [],
     deadline: new Date(Date.now() - 86400000).toISOString(),
