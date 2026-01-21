@@ -23,7 +23,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<any[]>([]);
 
-  // Config riêng biệt cho mode hiện tại (lưu vào localStorage với key mode)
+  // Config riêng biệt cho mode hiện tại (v3 để tránh xung đột cấu hình cũ)
   const [dsConfig, setDsConfig] = useState<any>(() => {
     const saved = localStorage.getItem(`ds_config_v3_${mode}`);
     return saved ? JSON.parse(saved) : { url: "", mapping: {}, autoSync: false };
@@ -55,27 +55,39 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
     setIsReading(true);
     setAvailableColumns([]);
     try {
-      const res = await fetch(dsConfig.url);
+      // Đảm bảo URL là dạng export CSV
+      let finalUrl = dsConfig.url.trim();
+      if (finalUrl.includes('/edit')) {
+        finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+        setDsConfig(prev => ({ ...prev, url: finalUrl }));
+      }
+
+      const res = await fetch(finalUrl);
+      if (!res.ok) throw new Error("Không thể tải file. Hãy chắc chắn link đã được Share Public (Anyone with link can view).");
+      
       const csv = await res.text();
       const wb = XLSX.read(csv, { type: 'string' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw: any[] = XLSX.utils.sheet_to_json(ws);
+      
       if (raw.length > 0) {
         setAvailableColumns(Object.keys(raw[0]));
         setRawRows(raw);
-        alert(`Đã đọc ${raw.length} dòng dữ liệu. Vui lòng kiểm tra Mapping bên dưới.`);
+        alert(`Đã đọc được ${raw.length} dòng dữ liệu. Vui lòng kiểm tra Mapping bên dưới.`);
       } else {
-        alert("File không có dữ liệu hoặc không đúng định dạng!");
+        alert("File trống hoặc không có tiêu đề cột!");
       }
-    } catch (e) { 
+    } catch (e: any) { 
       console.error("Read error:", e); 
-      alert("Lỗi khi đọc file. Kiểm tra xem link đã được chia sẻ Public và có đúng định dạng CSV chưa (đuôi /export?format=csv).");
+      alert("Lỗi: " + e.message + "\n\nLưu ý: Bạn phải dùng link Google Sheet đã chuyển sang định dạng CSV (đuôi /export?format=csv)");
     }
     finally { setIsReading(false); }
   };
 
   const handleSync = async (isAuto = false) => {
     let rowsToProcess = rawRows;
+    
+    // Nếu là auto hoặc chưa đọc data vào ram, thì phải fetch mới
     if (isAuto || rowsToProcess.length === 0) {
       if (!dsConfig.url) return;
       setIsSyncing(true);
@@ -92,15 +104,16 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
     }
 
     if (!dsConfig.mapping.id) {
-      if (!isAuto) alert("Chưa thiết lập cột Định danh trong phần Mapping!");
+      if (!isAuto) alert("Lỗi: Bạn chưa chọn cột Định danh trong phần Mapping!");
       setIsSyncing(false);
       return;
     }
 
     setIsSyncing(true);
     try {
+      let count = 0;
       for (const row of rowsToProcess) {
-        const entityId = String(row[dsConfig.mapping.id] || '');
+        const entityId = String(row[dsConfig.mapping.id] || '').trim();
         if (!entityId) continue;
         
         const targets: any = {};
@@ -118,12 +131,13 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           type: mode,
           targets
         });
+        count++;
       }
       fetchKpis();
-      if (!isAuto) alert("Đồng bộ dữ liệu thành công!");
+      if (!isAuto) alert(`Đã cập nhật ${count} bản ghi KPI vào Cloud!`);
     } catch (e) { 
       console.error("Final sync error:", e); 
-      if (!isAuto) alert("Lỗi khi ghi dữ liệu.");
+      if (!isAuto) alert("Lỗi khi lưu dữ liệu vào Firebase.");
     }
     finally { setIsSyncing(false); }
   };
@@ -153,7 +167,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
         <div className="flex bg-slate-100 p-1.5 rounded-[20px] border">
           <button onClick={() => setActiveTab('eval')} className={`px-8 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Đánh giá kết quả</button>
           {isAdmin && (
-            <button onClick={() => setActiveTab('config')} className={`px-6 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><SettingsIcon size={18}/></button>
+            <button onClick={() => setActiveTab('config')} className={`px-6 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`} title="Cấu hình đồng bộ Cloud"><SettingsIcon size={18}/></button>
           )}
         </div>
       </div>
@@ -233,17 +247,17 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
           <div className="flex items-center gap-6 border-b pb-8">
             <div className="bg-blue-600 p-5 rounded-[32px] text-white shadow-2xl"><Database size={40}/></div>
             <div>
-              <h3 className="text-2xl font-black text-slate-800">Cấu hình Import Cloud (Mode: {mode === 'group' ? 'Tập thể' : 'Cá nhân'})</h3>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Google Sheet Automation Engine</p>
+              <h3 className="text-2xl font-black text-slate-800">Cấu hình Import Google Sheet (Mode: {mode === 'group' ? 'Tập thể' : 'Cá nhân'})</h3>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Cloud Automation Engine</p>
             </div>
           </div>
           
           <div className="space-y-8">
-            {/* Bước 1: Nhập link và Đọc dữ liệu */}
+            {/* BƯỚC 1: NHẬP LINK VÀ ĐỌC DỮ LIỆU */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-black text-xs">1</div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Đường dẫn Google Sheet (Public CSV)</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Đường dẫn Google Sheet (Phải chia sẻ công khai)</label>
               </div>
               <div className="flex gap-4">
                 <input 
@@ -255,38 +269,39 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                 <button 
                   onClick={handleReadData} 
                   disabled={isReading || !dsConfig.url} 
-                  className="bg-slate-800 text-white px-8 py-4 rounded-[20px] font-black text-xs uppercase shadow-xl hover:bg-black flex items-center gap-3 disabled:opacity-50"
+                  className="bg-slate-800 text-white px-8 py-4 rounded-[20px] font-black text-xs uppercase shadow-xl hover:bg-black flex items-center gap-3 disabled:opacity-50 transition-all active:scale-95"
                 >
                   {isReading ? <Loader2 className="animate-spin" size={18}/> : <Table size={18}/>} Đọc dữ liệu
                 </button>
               </div>
+              <p className="text-[10px] text-slate-400 italic">Mẹo: Hệ thống sẽ tự động đổi đuôi link /edit sang /export?format=csv để đọc dữ liệu.</p>
             </div>
             
-            {/* Bước 2: Thiết lập Mapping */}
+            {/* BƯỚC 2: THIẾT LẬP MAPPING (CHỈ HIỆN KHI ĐÃ ĐỌC XONG CỘT) */}
             {availableColumns.length > 0 && (
               <div className="bg-blue-50 p-8 rounded-[36px] border-2 border-blue-100 space-y-6 animate-fade-in shadow-inner">
                 <div className="flex items-center justify-between border-b border-blue-200 pb-4">
                   <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest flex items-center gap-2"><Filter size={16}/> 2. Ánh xạ dữ liệu (Mapping)</h4>
-                  <span className="text-[9px] font-bold text-blue-500 bg-white px-3 py-1 rounded-full border border-blue-200">Tìm thấy {availableColumns.length} cột</span>
+                  <span className="text-[9px] font-bold text-blue-500 bg-white px-3 py-1 rounded-full border border-blue-200 uppercase">Tìm thấy {availableColumns.length} cột trong file</span>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-x-10 gap-y-6">
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[9px] font-black text-blue-400 uppercase">Cột Định danh ({mode === 'personal' ? 'Mã HRM' : 'Mã Đơn vị'})</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6">
+                  <div className="md:col-span-2 space-y-1.5">
+                    <label className="text-[9px] font-black text-blue-400 uppercase">Cột Định danh ({mode === 'personal' ? 'Mã HRM' : 'Mã Đơn vị'}) <span className="text-red-500">*</span></label>
                     <select 
-                      className="w-full border-2 p-3 rounded-xl font-bold text-xs bg-white outline-none focus:border-blue-500" 
+                      className="w-full border-2 p-3.5 rounded-xl font-bold text-xs bg-white outline-none focus:border-blue-500 shadow-sm" 
                       value={dsConfig.mapping.id || ""} 
                       onChange={e => setDsConfig({...dsConfig, mapping: {...dsConfig.mapping, id: e.target.value}})}
                     >
-                      <option value="">-- Chọn cột định danh --</option>
+                      <option value="">-- Chọn cột làm ID (Dùng để xác định người/đơn vị) --</option>
                       {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
                     </select>
                   </div>
                   
                   {Object.keys(KPI_KEYS).map(k => (
                     <React.Fragment key={k}>
-                      <div className="space-y-1.5 border-l-4 border-blue-300 pl-4 bg-white/50 p-3 rounded-r-xl">
-                        <label className="text-[9px] font-black text-blue-600 uppercase mb-1 block truncate" title={KPI_KEYS[k as KPIKey]}>{KPI_KEYS[k as KPIKey]} (Kế hoạch)</label>
+                      <div className="space-y-1.5 border-l-4 border-blue-300 pl-4 bg-white/50 p-4 rounded-r-xl shadow-sm">
+                        <label className="text-[9px] font-black text-blue-600 uppercase mb-2 block truncate" title={KPI_KEYS[k as KPIKey]}>{KPI_KEYS[k as KPIKey]} (Kế hoạch)</label>
                         <select 
                           className="w-full border-2 p-2.5 rounded-xl font-bold text-[11px] bg-white outline-none" 
                           value={dsConfig.mapping[`${k}_t`] || ""} 
@@ -296,8 +311,8 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                           {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
                         </select>
                       </div>
-                      <div className="space-y-1.5 border-l-4 border-green-300 pl-4 bg-white/50 p-3 rounded-r-xl">
-                        <label className="text-[9px] font-black text-green-700 uppercase mb-1 block truncate" title={KPI_KEYS[k as KPIKey]}>{KPI_KEYS[k as KPIKey]} (Thực hiện)</label>
+                      <div className="space-y-1.5 border-l-4 border-green-300 pl-4 bg-white/50 p-4 rounded-r-xl shadow-sm">
+                        <label className="text-[9px] font-black text-green-700 uppercase mb-2 block truncate" title={KPI_KEYS[k as KPIKey]}>{KPI_KEYS[k as KPIKey]} (Thực hiện)</label>
                         <select 
                           className="w-full border-2 p-2.5 rounded-xl font-bold text-[11px] bg-white outline-none" 
                           value={dsConfig.mapping[`${k}_a`] || ""} 
@@ -313,18 +328,18 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
               </div>
             )}
 
-            {/* Bước 3: Lưu và Thực thi */}
+            {/* BƯỚC 3: LƯU VÀ THỰC THI */}
             <div className="flex flex-col gap-6 pt-4">
               <div className="flex items-center gap-4 p-6 bg-slate-50 rounded-[24px] border-2 border-slate-200">
                 <input type="checkbox" id="autoSyncCheck" className="w-6 h-6 rounded-lg text-blue-600 focus:ring-blue-500" checked={dsConfig.autoSync} onChange={e => setDsConfig({...dsConfig, autoSync: e.target.checked})} />
-                <label htmlFor="autoSyncCheck" className="text-sm font-black text-slate-700 cursor-pointer">Kích hoạt đồng bộ tự động 10 phút/lần (Yêu cầu lưu cấu hình Mapping)</label>
+                <label htmlFor="autoSyncCheck" className="text-sm font-black text-slate-700 cursor-pointer">Kích hoạt đồng bộ tự động 10 phút/lần (Yêu cầu phải Lưu cấu hình Mapping)</label>
               </div>
               
-              <div className="flex justify-end gap-5">
+              <div className="flex flex-wrap justify-end gap-5">
                 <button 
                   onClick={() => { 
                     localStorage.setItem(`ds_config_v3_${mode}`, JSON.stringify(dsConfig)); 
-                    alert(`Đã lưu cấu hình mapping cho KPI ${mode === 'group' ? 'Tập thể' : 'Cá nhân'}.`); 
+                    alert(`Đã lưu cấu hình mapping cho KPI ${mode === 'group' ? 'TẬP THỂ' : 'CÁ NHÂN'} thành công.`); 
                   }} 
                   className="px-8 py-4 font-black text-slate-400 hover:text-slate-800 transition-colors uppercase text-xs"
                 >
@@ -333,9 +348,9 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
                 <button 
                   onClick={() => handleSync(false)} 
                   disabled={isSyncing || !dsConfig.mapping.id} 
-                  className="bg-blue-600 text-white px-12 py-4 rounded-[24px] font-black text-xs uppercase shadow-2xl shadow-blue-100 hover:bg-blue-700 flex items-center gap-3 transition-all disabled:opacity-50"
+                  className="bg-blue-600 text-white px-12 py-4 rounded-[24px] font-black text-xs uppercase shadow-2xl shadow-blue-100 hover:bg-blue-700 flex items-center gap-3 transition-all disabled:opacity-50 active:scale-95"
                 >
-                  {isSyncing ? <Loader2 className="animate-spin" size={18}/> : <Import size={18}/>} Bắt đầu Import vào Firebase
+                  {isSyncing ? <Loader2 className="animate-spin" size={18}/> : <Import size={18}/>} Bắt đầu Import vào Cloud
                 </button>
               </div>
             </div>

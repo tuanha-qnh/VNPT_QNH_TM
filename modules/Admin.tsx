@@ -23,7 +23,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   const [isProcessing, setIsProcessing] = useState(false);
 
   const isSystemAdmin = currentUser.username === 'admin';
-  const isSubAdmin = currentUser.canManageUsers;
 
   const generateUnitCode = () => {
     const num = Math.floor(Math.random() * 999) + 1;
@@ -32,7 +31,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
 
   const filteredUsers = useMemo(() => {
     let list = users;
-    // Quyền: SubAdmin chỉ thấy user trong đơn vị mình
     if (!isSystemAdmin) {
       list = users.filter(u => u.unitId === currentUser.unitId);
     }
@@ -54,6 +52,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   }, [units]);
 
   const handleDownloadTemplate = () => {
+    // Đảm bảo cột "Mã đơn vị" xuất hiện trong file mẫu
     const data = [
       { 
         "Họ và tên": "Nguyễn Văn A", 
@@ -61,14 +60,23 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         "Username": "anv", 
         "Mật khẩu": "123", 
         "Chức danh": "Nhân viên", 
-        "Mã đơn vị": "QNH001", 
-        "SubAdmin": "No" 
+        "Mã đơn vị": "QNH001", // Trường quan trọng để mapping
+        "SubAdmin (Yes/No)": "No" 
+      },
+      { 
+        "Họ và tên": "Trần Thị B", 
+        "Mã HRM": "54321", 
+        "Username": "btt", 
+        "Mật khẩu": "123", 
+        "Chức danh": "Trưởng phòng", 
+        "Mã đơn vị": "QNH002", 
+        "SubAdmin (Yes/No)": "Yes" 
       }
     ];
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "DanhSach");
-    XLSX.writeFile(wb, "Mau_Import_NhanSu.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "DanhSachNhanSu");
+    XLSX.writeFile(wb, "Mau_Import_NhanSu_VNPT.xlsx");
   };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,35 +84,54 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
-      
-      setIsProcessing(true);
-      let count = 0;
-      for (const row of data) {
-        // Tìm đơn vị theo mã
-        const unitCode = String(row["Mã đơn vị"] || "");
-        const unit = units.find(u => u.code === unitCode);
-        const unitId = unit ? unit.id : currentUser.unitId; // Mặc định về đơn vị người đang import nếu không tìm thấy
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
+        
+        setIsProcessing(true);
+        let successCount = 0;
+        let skipCount = 0;
 
-        const id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-        await dbClient.upsert('users', id, {
-          hrmCode: String(row["Mã HRM"]),
-          fullName: row["Họ và tên"],
-          username: row["Username"],
-          password: md5(String(row["Mật khẩu"] || '123')),
-          title: row["Chức danh"] || Role.STAFF,
-          unitId: unitId,
-          isFirstLogin: true,
-          canManageUsers: row["SubAdmin"]?.toLowerCase() === 'yes'
-        });
-        count++;
+        for (const row of data) {
+          const hrmCode = String(row["Mã HRM"] || "").trim();
+          const username = String(row["Username"] || "").trim();
+          
+          if (!hrmCode || !username) {
+            skipCount++;
+            continue;
+          }
+
+          // Tìm unitId dựa trên mã đơn vị nhập trong excel
+          const unitCode = String(row["Mã đơn vị"] || "").trim();
+          const unit = units.find(u => u.code === unitCode);
+          
+          // Nếu không tìm thấy đơn vị theo mã, gán mặc định về đơn vị của admin đang thao tác
+          const unitId = unit ? unit.id : currentUser.unitId;
+
+          const id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+          await dbClient.upsert('users', id, {
+            hrmCode,
+            fullName: row["Họ và tên"] || "Chưa đặt tên",
+            username,
+            password: md5(String(row["Mật khẩu"] || '123')),
+            title: row["Chức danh"] || Role.STAFF,
+            unitId: unitId,
+            isFirstLogin: true,
+            canManageUsers: String(row["SubAdmin (Yes/No)"]).toLowerCase() === 'yes'
+          });
+          successCount++;
+        }
+        
+        onRefresh();
+        alert(`Hoàn tất import:\n- Thành công: ${successCount}\n- Bỏ qua: ${skipCount}\n\n(Lưu ý: Nếu không tìm thấy Mã đơn vị, nhân sự đã được gán vào đơn vị của bạn)`);
+      } catch (err) {
+        alert("Lỗi khi đọc file Excel. Vui lòng kiểm tra lại định dạng.");
+      } finally {
+        setIsProcessing(false);
+        e.target.value = ''; // Reset input
       }
-      onRefresh();
-      setIsProcessing(false);
-      alert(`Đã import ${count} nhân sự thành công!`);
     };
     reader.readAsBinaryString(file);
   };
