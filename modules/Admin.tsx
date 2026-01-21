@@ -55,7 +55,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
 
   const handleDownloadTemplate = () => {
     const data = [
-      { "Họ và tên": "Nguyễn Văn A", "Mã HRM": "12345", "Username": "anv", "Mật khẩu": "123", "Chức danh": "Nhân viên", "SubAdmin": "No" }
+      { 
+        "Họ và tên": "Nguyễn Văn A", 
+        "Mã HRM": "12345", 
+        "Username": "anv", 
+        "Mật khẩu": "123", 
+        "Chức danh": "Nhân viên", 
+        "Mã đơn vị": "QNH001", 
+        "SubAdmin": "No" 
+      }
     ];
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -74,7 +82,13 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
       const data: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
       
       setIsProcessing(true);
+      let count = 0;
       for (const row of data) {
+        // Tìm đơn vị theo mã
+        const unitCode = String(row["Mã đơn vị"] || "");
+        const unit = units.find(u => u.code === unitCode);
+        const unitId = unit ? unit.id : currentUser.unitId; // Mặc định về đơn vị người đang import nếu không tìm thấy
+
         const id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
         await dbClient.upsert('users', id, {
           hrmCode: String(row["Mã HRM"]),
@@ -82,14 +96,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           username: row["Username"],
           password: md5(String(row["Mật khẩu"] || '123')),
           title: row["Chức danh"] || Role.STAFF,
-          unitId: currentUser.unitId,
+          unitId: unitId,
           isFirstLogin: true,
           canManageUsers: row["SubAdmin"]?.toLowerCase() === 'yes'
         });
+        count++;
       }
       onRefresh();
       setIsProcessing(false);
-      alert(`Đã import ${data.length} nhân sự thành công!`);
+      alert(`Đã import ${count} nhân sự thành công!`);
     };
     reader.readAsBinaryString(file);
   };
@@ -100,7 +115,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
     try {
       const id = editingItem?.id || (activeTab === 'users' ? `user_${Date.now()}` : `unit_${Date.now()}`);
       if (activeTab === 'units') {
-        // Luôn gán gốc là VNPT QN nếu không có parent
         const parentId = formData.parentId || units.find(u => u.code === 'VNPT_QN')?.id || null;
         await dbClient.upsert('units', id, {
           ...formData,
@@ -122,7 +136,6 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
     finally { setIsProcessing(false); }
   };
 
-  // Fix: Explicitly include 'key' in props type to avoid TS error in JSX map calls (lines 157, 207)
   const UnitNode = ({ item, level }: { item: any, level: number, key?: any }) => {
     const [isOpen, setIsOpen] = useState(true);
     return (
