@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
-import { Task, TaskStatus, Unit, User, KPI_KEYS, Role, KPIKey, PersonalTask } from '../types';
+import { Task, TaskStatus, Unit, User, Role, PersonalTask, KPIDefinition } from '../types';
 import { Wifi, Tv, Rss, Camera, UserPlus, BarChartBig, TrendingUp, Zap, Briefcase, Calendar as CalendarIcon, Smartphone, StickyNote, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
@@ -12,10 +12,11 @@ interface DashboardProps {
   users: User[];
   currentUser: User;
   groupKpi: any[];
+  kpiDefinitions: KPIDefinition[];
   onRefresh: () => void;
 }
 
-const kpiDetails: Record<KPIKey, { icon: React.ReactElement, color: string, bgColor: string }> = {
+const kpiDetails: Record<string, { icon: React.ReactElement, color: string, bgColor: string }> = {
   fiber: { icon: <Wifi size={24}/>, color: 'text-sky-500', bgColor: 'bg-sky-50' },
   mytv: { icon: <Tv size={24}/>, color: 'text-purple-500', bgColor: 'bg-purple-50' },
   mesh: { icon: <Rss size={24}/>, color: 'text-amber-500', bgColor: 'bg-amber-50' },
@@ -26,11 +27,13 @@ const kpiDetails: Record<KPIKey, { icon: React.ReactElement, color: string, bgCo
 };
 
 
-const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, onRefresh }) => {
+const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, kpiDefinitions, onRefresh }) => {
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
+  
+  const groupKpiDefs = useMemo(() => kpiDefinitions.filter(d => d.type === 'group' || d.type === 'both'), [kpiDefinitions]);
 
   useEffect(() => {
     const fetchPersonal = async () => {
@@ -82,7 +85,8 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
                 if (!entityId) continue;
                 
                 const targets: any = {};
-                Object.keys(KPI_KEYS).forEach(k => {
+                kpiDefinitions.forEach(def => {
+                    const k = def.id;
                     targets[k] = {
                         target: Number(row[config.mapping[`${k}_t`]] || 0),
                         actual: Number(row[config.mapping[`${k}_a`]] || 0)
@@ -119,16 +123,16 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
     const currentMonth = new Date().toISOString().slice(0, 7);
     const records = groupKpi.filter(r => r.period === currentMonth && r.type === 'group' && (currentUser.username === 'admin' || myAccessibleUnits.includes(units.find(u => u.code === r.entityId)?.id || '')));
     const summary: any = {};
-    Object.keys(KPI_KEYS).forEach(k => {
+    groupKpiDefs.forEach(def => {
       let t = 0, a = 0;
       records.forEach(r => {
-        t += r.targets?.[k]?.target || 0;
-        a += r.targets?.[k]?.actual || 0;
+        t += r.targets?.[def.id]?.target || 0;
+        a += r.targets?.[def.id]?.actual || 0;
       });
-      summary[k] = { target: t, actual: a, percent: t > 0 ? Math.round((a/t)*100) : 0 };
+      summary[def.id] = { target: t, actual: a, percent: t > 0 ? Math.round((a/t)*100) : 0 };
     });
     return summary;
-  }, [groupKpi, units, currentUser, myAccessibleUnits]);
+  }, [groupKpi, units, currentUser, myAccessibleUnits, groupKpiDefs]);
 
   // 2. Thống kê công việc - Lọc theo quyền xem
   const myTasks = useMemo(() => {
@@ -196,9 +200,10 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(Object.keys(KPI_KEYS) as KPIKey[]).map(key => {
+                {groupKpiDefs.map(def => {
+                  const key = def.id;
                   const data = provinceKpi[key] || { target: 0, actual: 0, percent: 0 };
-                  const details = kpiDetails[key];
+                  const details = kpiDetails[key] || { icon: <BarChartBig size={24}/>, color: 'text-slate-500', bgColor: 'bg-slate-50' };
                   return (
                     <div key={key} className="bg-white p-6 rounded-[32px] shadow-sm border flex flex-col justify-between">
                       <div className="flex items-start justify-between mb-4">
@@ -208,7 +213,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
                         <div className={`text-xl font-black ${details.color}`}>{data.percent}%</div>
                       </div>
                       <div className="mt-auto">
-                        <h4 className="text-sm font-bold text-slate-800 leading-tight mb-1 truncate">{KPI_KEYS[key]}</h4>
+                        <h4 className="text-sm font-bold text-slate-800 leading-tight mb-1 truncate">{def.name}</h4>
                         <div className="text-2xl font-black text-slate-800">
                           {data.actual.toLocaleString()}
                           <span className="text-xs font-mono text-slate-400 ml-2">/ {data.target.toLocaleString()}</span>

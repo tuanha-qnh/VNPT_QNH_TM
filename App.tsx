@@ -9,7 +9,7 @@ import Settings from './modules/Settings';
 import PersonalTasks from './modules/PersonalTasks';
 import Reports from './modules/Reports'; // Import module mới
 import { dbClient } from './utils/firebaseClient'; 
-import { Task, Unit, User, Role } from './types';
+import { Task, Unit, User, Role, KPIDefinition } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
 import md5 from 'md5'; 
 
@@ -30,6 +30,7 @@ const App: React.FC = () => {
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [kpis, setKpis] = useState<any[]>([]);
+  const [kpiDefinitions, setKpiDefinitions] = useState<KPIDefinition[]>([]);
 
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
@@ -40,17 +41,36 @@ const App: React.FC = () => {
       else setIsRefreshing(true);
       
       try {
-          const [unitsData, usersData, tasksData, kpisData] = await Promise.all([
+          const [unitsData, usersData, tasksData, kpisData, kpiDefsDataResult] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
-              dbClient.getAll('kpis')
+              dbClient.getAll('kpis'),
+              dbClient.getAll('kpi_definitions')
           ]);
+
+          let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
+          if (kpiDefsData.length === 0) {
+              const defaultKpis: KPIDefinition[] = [
+                { id: 'fiber', name: "PTTB FiberVNN", type: 'group', unit: 'TB', order: 1 },
+                { id: 'mytv', name: "PTTB MyTV", type: 'group', unit: 'TB', order: 2 },
+                { id: 'mesh', name: "PTTB Mesh", type: 'group', unit: 'TB', order: 3 },
+                { id: 'camera', name: "PTTB Camera", type: 'group', unit: 'TB', order: 4 },
+                { id: 'mobile_ptm', name: "PTTB Di động", type: 'group', unit: 'TB', order: 5 },
+                { id: 'mobile_rev', name: "Doanh thu Di động", type: 'group', unit: 'VNĐ', order: 6 },
+                { id: 'revenue', name: "Doanh thu VT-CNTT", type: 'group', unit: 'VNĐ', order: 7 }
+              ];
+              for (const kpi of defaultKpis) {
+                  await dbClient.upsert('kpi_definitions', kpi.id, kpi);
+              }
+              kpiDefsData = defaultKpis;
+          }
 
           setUnits(unitsData as Unit[]);
           setUsers(usersData as User[]);
           setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
+          setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
 
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
@@ -166,15 +186,15 @@ const App: React.FC = () => {
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     switch (activeModule) {
-      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} onRefresh={() => fetchInitialData(true)} />;
+      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
-      case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
-      case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
-      case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
+      case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
+      case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
+      case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
-      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} onRefresh={() => fetchInitialData(true)} />;
+      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
     }
   };
 

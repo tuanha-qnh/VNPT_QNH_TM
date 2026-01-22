@@ -100,17 +100,13 @@ export interface PersonalTask {
   createdAt: string;
 }
 
-export const KPI_KEYS = {
-  fiber: "Phát triển thuê bao FiberVNN",
-  mytv: "Phát triển thuê bao MyTV",
-  mesh: "Phát triển thiết thiết bị Mesh",
-  camera: "Phát triển thiết bị Camera",
-  mobile_ptm: "Thuê bao Di động PTM",
-  mobile_rev: "Doanh thu di động PTM",
-  revenue: "Doanh thu dịch vụ VT-CNTT"
-};
-
-export type KPIKey = keyof typeof KPI_KEYS;
+export interface KPIDefinition {
+  id: string; // e.g., "fiber", "mytv"
+  name: string;
+  type: 'group' | 'personal' | 'both';
+  unit: string; // e.g., "TB", "VNĐ"
+  order?: number;
+}
 
 export interface KPIRecord {
   id: string;

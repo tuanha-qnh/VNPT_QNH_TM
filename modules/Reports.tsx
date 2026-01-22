@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { Task, TaskStatus, Unit, User, Role, KPI_KEYS } from '../types';
+import { Task, TaskStatus, Unit, User, Role, KPIDefinition } from '../types';
 import { BarChartBig, Users, Building, RefreshCw, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
@@ -11,10 +11,11 @@ interface ReportsProps {
   units: Unit[];
   users: User[];
   currentUser: User;
+  kpiDefinitions: KPIDefinition[];
   onRefresh: () => void;
 }
 
-const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onRefresh }) => {
+const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, kpiDefinitions, onRefresh }) => {
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [viewMode, setViewMode] = useState<'unit' | 'user'>('unit');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -64,7 +65,8 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
                 if (!entityId) continue;
                 
                 const targets: any = {};
-                Object.keys(KPI_KEYS).forEach(k => {
+                kpiDefinitions.forEach(def => {
+                    const k = def.id;
                     targets[k] = {
                         target: Number(row[config.mapping[`${k}_t`]] || 0),
                         actual: Number(row[config.mapping[`${k}_a`]] || 0)
