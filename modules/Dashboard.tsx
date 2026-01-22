@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { Task, TaskStatus, Unit, User, KPI_KEYS, Role, KPIKey, PersonalTask } from '../types';
-import { AlertCircle, CheckCircle, Clock, TrendingUp, Activity, Zap, Briefcase, Calendar as CalendarIcon, Smartphone, StickyNote, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
+import { Wifi, Tv, Rss, Camera, UserPlus, BarChartBig, TrendingUp, Zap, Briefcase, Calendar as CalendarIcon, Smartphone, StickyNote, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 
@@ -14,6 +14,17 @@ interface DashboardProps {
   groupKpi: any[];
   onRefresh: () => void;
 }
+
+const kpiDetails: Record<KPIKey, { icon: React.ReactElement, color: string, bgColor: string }> = {
+  fiber: { icon: <Wifi size={24}/>, color: 'text-sky-500', bgColor: 'bg-sky-50' },
+  mytv: { icon: <Tv size={24}/>, color: 'text-purple-500', bgColor: 'bg-purple-50' },
+  mesh: { icon: <Rss size={24}/>, color: 'text-amber-500', bgColor: 'bg-amber-50' },
+  camera: { icon: <Camera size={24}/>, color: 'text-slate-500', bgColor: 'bg-slate-50' },
+  mobile_ptm: { icon: <UserPlus size={24}/>, color: 'text-pink-500', bgColor: 'bg-pink-50' },
+  mobile_rev: { icon: <Smartphone size={24}/>, color: 'text-blue-500', bgColor: 'bg-blue-50' },
+  revenue: { icon: <BarChartBig size={24}/>, color: 'text-green-500', bgColor: 'bg-green-50' },
+};
+
 
 const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, onRefresh }) => {
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
@@ -183,40 +194,36 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
                   Đồng bộ KPI
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden group">
-                  <Smartphone className="text-blue-600 mb-6" size={40}/>
-                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Di động PTM</div>
-                  <div className="text-3xl font-black text-slate-800 mt-2">{(provinceKpi.mobile_rev?.actual || 0).toLocaleString()} <span className="text-xs text-slate-400">VNĐ</span></div>
-                  <div className="mt-6 flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-400 uppercase">Hoàn thành:</span>
-                    <span className="text-lg font-black text-blue-600">{provinceKpi.mobile_rev?.percent}%</span>
-                  </div>
-                </div>
-                <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden group">
-                  <Activity className="text-green-600 mb-6" size={40}/>
-                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">FiberVNN PTM</div>
-                  <div className="text-3xl font-black text-slate-800 mt-2">{(provinceKpi.fiber?.actual || 0).toLocaleString()} <span className="text-xs text-slate-400">TB</span></div>
-                  <div className="mt-6 flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-400 uppercase">Hoàn thành:</span>
-                    <span className="text-lg font-black text-green-600">{provinceKpi.fiber?.percent}%</span>
-                  </div>
-                </div>
-                <div className="bg-slate-900 p-8 rounded-[40px] shadow-2xl md:col-span-2 flex flex-col justify-center">
-                  <h4 className="text-white text-[10px] font-black uppercase tracking-[0.2em] mb-6 opacity-60">Các chỉ tiêu trọng điểm khác</h4>
-                  <div className="grid grid-cols-2 gap-x-12 gap-y-4">
-                    {['mytv', 'mesh', 'camera', 'revenue'].map(k => (
-                      <div key={k} className="flex justify-between items-center border-b border-white/10 pb-2.5">
-                        <span className="text-[10px] text-white/80 font-black uppercase truncate pr-4">{KPI_KEYS[k as KPIKey]}</span>
-                        <div className="flex items-baseline gap-2 text-right">
-                          <span className="font-mono text-sm text-white/80 font-medium">{(provinceKpi[k]?.actual || 0).toLocaleString()}</span>
-                          <span className="text-base font-black text-blue-400">{provinceKpi[k]?.percent}%</span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {(Object.keys(KPI_KEYS) as KPIKey[]).map(key => {
+                  const data = provinceKpi[key] || { target: 0, actual: 0, percent: 0 };
+                  const details = kpiDetails[key];
+                  return (
+                    <div key={key} className="bg-white p-6 rounded-[32px] shadow-sm border flex flex-col justify-between">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${details.bgColor} ${details.color}`}>
+                          {details.icon}
+                        </div>
+                        <div className={`text-xl font-black ${details.color}`}>{data.percent}%</div>
+                      </div>
+                      <div className="mt-auto">
+                        <h4 className="text-sm font-bold text-slate-800 leading-tight mb-1 truncate">{KPI_KEYS[key]}</h4>
+                        <div className="text-2xl font-black text-slate-800">
+                          {data.actual.toLocaleString()}
+                          <span className="text-xs font-mono text-slate-400 ml-2">/ {data.target.toLocaleString()}</span>
+                        </div>
+                        <div className="mt-4">
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className={`${details.color.replace('text-', 'bg-')} h-full rounded-full`} style={{ width: `${Math.min(data.percent, 100)}%` }} />
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  );
+                })}
               </div>
+
             </section>
 
             <section className="space-y-8">
