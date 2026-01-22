@@ -166,15 +166,15 @@ const App: React.FC = () => {
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     switch (activeModule) {
-      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
+      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} onRefresh={() => fetchInitialData(true)} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
-      case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} />;
+      case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
-      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
+      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} onRefresh={() => fetchInitialData(true)} />;
     }
   };
 
