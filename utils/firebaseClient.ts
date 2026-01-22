@@ -1,6 +1,6 @@
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, updateDoc, query, where, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, updateDoc, query, where, orderBy, getDoc } from 'firebase/firestore';
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -26,6 +26,17 @@ export const dbClient = {
         if (!db) return [];
         const querySnapshot = await getDocs(collection(db, colName));
         return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    },
+    
+    async getById(colName: string, id: string) {
+        if (!db) return null;
+        const docRef = doc(db, colName, id);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() };
+        } else {
+            return null;
+        }
     },
 
     async getByFilter(colName: string, field: string, value: any) {

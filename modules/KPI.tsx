@@ -23,13 +23,42 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<any[]>([]);
 
-  const [dsConfig, setDsConfig] = useState<any>(() => {
-    const saved = localStorage.getItem(`ds_config_v4_${mode}`);
-    return saved ? JSON.parse(saved) : { url: "", mapping: {}, autoSync: false };
-  });
+  const [dsConfig, setDsConfig] = useState<any>({ url: "", mapping: {} });
 
   const isAdmin = currentUser.username === 'admin';
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
+
+  useEffect(() => {
+    const loadConfig = async () => {
+        const configId = `${mode}_${selectedMonth}`;
+        const storedConfig = await dbClient.getById('kpi_configs', configId);
+        if (storedConfig) {
+            setDsConfig({ url: storedConfig.url, mapping: storedConfig.mapping || {} });
+        } else {
+            setDsConfig({ url: "", mapping: {} });
+        }
+    };
+    if (activeTab === 'config' && isAdmin) {
+        loadConfig();
+    }
+  }, [activeTab, selectedMonth, mode, isAdmin]);
+
+  const handleSaveConfig = async () => {
+      const configId = `${mode}_${selectedMonth}`;
+      try {
+          await dbClient.upsert('kpi_configs', configId, {
+              period: selectedMonth,
+              type: mode,
+              url: dsConfig.url,
+              mapping: dsConfig.mapping
+          });
+          alert(`Đã lưu cấu hình import cho tháng ${selectedMonth} thành công!`);
+      } catch (e) {
+          console.error(e);
+          alert("Lỗi khi lưu cấu hình.");
+      }
+  };
+
 
   const fetchKpis = useCallback(async () => {
     try {
@@ -173,7 +202,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
             <div className="bg-blue-600 p-5 rounded-[32px] text-white"><Database size={40}/></div>
             <div>
               <h3 className="text-2xl font-black text-slate-800 uppercase">Cấu hình Import Google Sheet</h3>
-              <p className="text-xs text-slate-400 font-bold uppercase mt-1">Hệ thống đồng bộ dữ liệu (Mode: {mode})</p>
+              <p className="text-xs text-slate-400 font-bold uppercase mt-1">Hệ thống đồng bộ dữ liệu (Mode: {mode}) - Tháng: {selectedMonth}</p>
             </div>
           </div>
           <div className="space-y-10">
@@ -217,7 +246,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode }) => {
               </div>
             )}
             <div className="flex justify-end gap-5">
-              <button onClick={() => { localStorage.setItem(`ds_config_v4_${mode}`, JSON.stringify(dsConfig)); alert("Đã lưu."); }} className="px-8 py-4 font-black text-slate-400 uppercase text-xs">Lưu cấu hình</button>
+              <button onClick={handleSaveConfig} className="px-8 py-4 font-black text-slate-400 uppercase text-xs">Lưu cấu hình</button>
               <button onClick={handleSync} disabled={isSyncing || !dsConfig.mapping.id} className="bg-blue-600 text-white px-12 py-5 rounded-[24px] font-black text-xs uppercase shadow-2xl transition-all">{isSyncing ? <Loader2 className="animate-spin"/> : <Import size={18}/>} Bắt đầu Import</button>
             </div>
           </div>

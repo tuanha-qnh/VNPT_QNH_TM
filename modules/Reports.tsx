@@ -23,6 +23,12 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
 
   const handleSyncData = async () => {
+    const monthToSync = prompt("Nhập tháng muốn đồng bộ dữ liệu (định dạng YYYY-MM):", selectedMonth);
+    if (!monthToSync || !/^\d{4}-\d{2}$/.test(monthToSync)) {
+        if (monthToSync) alert("Định dạng tháng không hợp lệ. Vui lòng nhập YYYY-MM.");
+        return;
+    }
+    
     setIsSyncing(true);
     try {
         const modes: ('personal' | 'group')[] = ['personal', 'group'];
@@ -30,12 +36,13 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
         let syncedModes = [];
 
         for (const mode of modes) {
-            const configStr = localStorage.getItem(`ds_config_v4_${mode}`);
-            if (!configStr) continue;
-
-            const config = JSON.parse(configStr);
-            if (!config.url || !config.mapping?.id) continue;
-
+            const configDoc = await dbClient.getById('kpi_configs', `${mode}_${monthToSync}`);
+            if (!configDoc || !configDoc.url || !configDoc.mapping?.id) {
+                console.warn(`Không tìm thấy cấu hình import cho ${mode} tháng ${monthToSync}`);
+                continue;
+            }
+            
+            const config = configDoc;
             let finalUrl = config.url.trim();
             if (finalUrl.includes('/edit')) {
                 finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
@@ -54,7 +61,6 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
             let count = 0;
             for (const row of rows) {
                 const entityId = String(row[config.mapping.id] || '').trim();
-                const period = selectedMonth;
                 if (!entityId) continue;
                 
                 const targets: any = {};
@@ -65,8 +71,8 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
                     };
                 });
                 
-                const docId = `${mode}_${period}_${entityId}`;
-                await dbClient.upsert('kpis', docId, { period, entityId, type: mode, targets });
+                const docId = `${mode}_${monthToSync}_${entityId}`;
+                await dbClient.upsert('kpis', docId, { period: monthToSync, entityId, type: mode, targets });
                 count++;
             }
             if (count > 0) {
@@ -76,10 +82,10 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onR
         }
 
         if (totalSynced > 0) {
-            alert(`Đồng bộ hoàn tất!\n- Dữ liệu: ${syncedModes.join(', ')}\n- Tháng: ${selectedMonth}\n- Số bản ghi: ${totalSynced}`);
+            alert(`Đồng bộ hoàn tất!\n- Dữ liệu: ${syncedModes.join(', ')}\n- Tháng: ${monthToSync}\n- Số bản ghi: ${totalSynced}`);
             onRefresh();
         } else {
-            alert("Không có dữ liệu mới để đồng bộ hoặc cấu hình import chưa được thiết lập. Vui lòng kiểm tra trong module KPI.");
+            alert(`Không tìm thấy dữ liệu hoặc cấu hình import cho tháng ${monthToSync}. Vui lòng kiểm tra lại hoặc yêu cầu Admin thiết lập.`);
         }
 
     } catch (e) {
