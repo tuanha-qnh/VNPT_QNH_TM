@@ -46,12 +46,14 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
   const myTasks = useMemo(() => {
     if (currentUser.username === 'admin') return tasks;
     return tasks.filter(t => 
+      // Điều kiện cơ bản: Công việc liên quan trực tiếp đến người dùng
       t.assignerId === currentUser.id ||
       t.primaryAssigneeIds.includes(currentUser.id) || 
       t.supportAssigneeIds.includes(currentUser.id) ||
-      myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || '')
+      // Điều kiện mở rộng cho Lãnh đạo: Xem tất cả công việc từ đơn vị mình quản lý
+      (isLeader && myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || ''))
     );
-  }, [tasks, currentUser, myAccessibleUnits, users]);
+  }, [tasks, currentUser, myAccessibleUnits, users, isLeader]);
 
   const taskStats = {
     total: myTasks.length,

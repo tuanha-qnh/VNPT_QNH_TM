@@ -7,6 +7,7 @@ import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import PersonalTasks from './modules/PersonalTasks';
+import Reports from './modules/Reports'; // Import module mới
 import { dbClient } from './utils/firebaseClient'; 
 import { Task, Unit, User, Role } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
@@ -171,6 +172,7 @@ const App: React.FC = () => {
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
+      case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
     }

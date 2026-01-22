@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, Users, CheckSquare, BarChart2, Settings, Menu, PieChart, StickyNote } from 'lucide-react';
+import { LayoutDashboard, Users, CheckSquare, BarChart2, Settings, Menu, PieChart, StickyNote, BarChartBig } from 'lucide-react';
 import { User } from '../types';
 
 interface SidebarProps {
@@ -23,6 +23,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
     { type: 'divider' },
     { id: 'kpi-group', label: 'KPI Tập thể', icon: <PieChart size={20} /> },
     { id: 'kpi-personal', label: 'KPI Cá nhân', icon: <BarChart2 size={20} /> },
+    { type: 'divider' },
+    { id: 'reports', label: 'Báo cáo & Đánh giá', icon: <BarChartBig size={20} /> },
   ].filter(Boolean);
 
   return (
