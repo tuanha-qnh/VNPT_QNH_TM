@@ -54,6 +54,7 @@ export interface ExtensionRequest {
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   requestDate: string;
+  rejectionReason?: string;
 }
 
 export interface TaskTimeline {

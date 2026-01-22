@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
-import { Task, TaskStatus, TaskPriority, User, Unit, Role } from '../types';
-import { Plus, Search, X, Edit2, Trash2, Save, Loader2, Timer, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal, UserCheck, Users } from 'lucide-react';
+import { Task, TaskStatus, TaskPriority, User, Unit, Role, ExtensionRequest } from '../types';
+import { Plus, Search, X, Edit2, Trash2, Save, Loader2, Timer, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal, UserCheck, Users, CalendarPlus } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 
 interface TasksProps {
@@ -45,10 +45,8 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
   const filteredTasks = useMemo(() => {
     let list = [...tasks];
     
-    // Phân quyền hiển thị: Lãnh đạo xem hết của đơn vị, Nhân viên chỉ xem việc liên quan
     if (currentUser.username !== 'admin') {
       if (isLeader) {
-        // Lãnh đạo xem việc mình giao, việc mình làm, và việc của đơn vị mình phụ trách
         list = list.filter(t => 
           t.assignerId === currentUser.id ||
           t.primaryAssigneeIds.includes(currentUser.id) || 
@@ -56,7 +54,6 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
           myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || '')
         );
       } else {
-        // Nhân viên: Chỉ xem việc mình là Người giao, Chủ trì hoặc Phối hợp
         list = list.filter(t => 
           t.assignerId === currentUser.id ||
           t.primaryAssigneeIds.includes(currentUser.id) || 
@@ -85,21 +82,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     if (!formData.name || !formData.deadline) return alert("Vui lòng nhập tên và thời hạn.");
     setIsProcessing(true);
     const id = formData.id || `task_${Date.now()}`;
-    const payload = {
-      ...formData,
-      id,
-      assignerId: formData.assignerId || currentUser.id,
-      assignerName: formData.assignerName || currentUser.fullName,
-      dateAssigned: formData.dateAssigned || new Date().toISOString().split('T')[0],
-      status: formData.status || TaskStatus.PENDING,
-      progress: formData.progress || 0,
-      primaryAssigneeIds: formData.primaryAssigneeIds || [],
-      supportAssigneeIds: formData.supportAssigneeIds || [],
-      priority: formData.priority || TaskPriority.MEDIUM,
-      assignmentSource: formData.assignmentSource || 'Direct',
-      eOfficeNumber: formData.eOfficeNumber || '',
-      coordinationInstructions: formData.coordinationInstructions || ''
-    };
+    const payload = { ...formData, id, assignerId: formData.assignerId || currentUser.id, assignerName: formData.assignerName || currentUser.fullName, dateAssigned: formData.dateAssigned || new Date().toISOString().split('T')[0], status: formData.status || TaskStatus.PENDING, progress: formData.progress || 0, primaryAssigneeIds: formData.primaryAssigneeIds || [], supportAssigneeIds: formData.supportAssigneeIds || [], priority: formData.priority || TaskPriority.MEDIUM, assignmentSource: formData.assignmentSource || 'Direct', eOfficeNumber: formData.eOfficeNumber || '', coordinationInstructions: formData.coordinationInstructions || '' };
     await dbClient.upsert('tasks', id, payload);
     setShowForm(false);
     onRefresh();
@@ -118,31 +101,46 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     const comment = prompt("Nội dung báo cáo kết quả thực hiện?");
     if (progress !== null && comment) {
       const newTimeline = [...(task.timeline || []), { date: new Date().toISOString(), comment, progress: Number(progress) }];
-      await dbClient.update('tasks', task.id, { 
-        timeline: newTimeline, 
-        progress: Number(progress),
-        executionResults: comment 
-      });
+      await dbClient.update('tasks', task.id, { timeline: newTimeline, progress: Number(progress), executionResults: comment });
       onRefresh();
-      if (selectedTask?.id === task.id) {
-          setSelectedTask({...selectedTask, timeline: newTimeline, progress: Number(progress), executionResults: comment});
-      }
+      if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, timeline: newTimeline, progress: Number(progress), executionResults: comment});
       alert("Đã cập nhật báo cáo thành công!");
     }
+  };
+  
+  const handleRequestExtension = async (task: Task) => {
+    const newDeadline = prompt("Nhập ngày gia hạn mới (YYYY-MM-DD):");
+    if (!newDeadline || !/^\d{4}-\d{2}-\d{2}$/.test(newDeadline)) {
+      if(newDeadline) alert("Định dạng ngày không hợp lệ.");
+      return;
+    }
+    const reason = prompt("Lý do xin gia hạn:");
+    if (!reason) return;
+    
+    const newRequest: ExtensionRequest = { requestedDate: newDeadline, reason, status: 'pending', requestDate: new Date().toISOString().split('T')[0] };
+    await dbClient.update('tasks', task.id, { extensionRequest: newRequest });
+    onRefresh();
+    if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, extensionRequest: newRequest});
+    alert("Đã gửi yêu cầu gia hạn thành công!");
   };
 
   const approveExtension = async (task: Task) => {
     if (!task.extensionRequest) return;
     const newDeadline = task.extensionRequest.requestedDate;
-    await dbClient.update('tasks', task.id, { 
-      deadline: newDeadline, 
-      extensionRequest: { ...task.extensionRequest, status: 'approved' } 
-    }); 
+    await dbClient.update('tasks', task.id, { deadline: newDeadline, extensionRequest: { ...task.extensionRequest, status: 'approved' } }); 
     onRefresh(); 
-    if (selectedTask?.id === task.id) {
-        setSelectedTask({...selectedTask, deadline: newDeadline, extensionRequest: {...task.extensionRequest, status: 'approved'}});
-    }
+    if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, deadline: newDeadline, extensionRequest: {...task.extensionRequest, status: 'approved'}});
     alert("Đã phê duyệt gia hạn thời gian thực hiện!"); 
+  };
+  
+  const rejectExtension = async (task: Task) => {
+    if (!task.extensionRequest) return;
+    const reason = prompt("Lý do từ chối (không bắt buộc):");
+    const updatedRequest = { ...task.extensionRequest, status: 'rejected', rejectionReason: reason || "Không có lý do cụ thể." };
+    await dbClient.update('tasks', task.id, { extensionRequest: updatedRequest });
+    onRefresh();
+    if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, extensionRequest: updatedRequest});
+    alert("Đã từ chối yêu cầu gia hạn.");
   };
 
   return (
@@ -193,26 +191,24 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
             </thead>
             <tbody className="divide-y">
               {filteredTasks.map((task, idx) => (
-                <tr key={task.id} className="group hover:bg-blue-50/40 transition-all cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-500" onClick={() => setSelectedTask(task)}>
-                  <td className="p-5 font-bold text-slate-500 text-xs">{task.dateAssigned}</td>
-                  <td className="p-5">
+                <tr key={task.id} className="group hover:bg-blue-50/40 transition-all border-l-4 border-l-transparent hover:border-l-blue-500">
+                  <td className="p-5 font-bold text-slate-500 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.dateAssigned}</td>
+                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
                     <div className="flex items-center gap-2 mb-1">
                       {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> {task.eOfficeNumber}</span>}
                     </div>
                     <div className="font-black text-slate-800 text-sm break-words line-clamp-2">{task.name}</div>
                   </td>
-                  <td className="p-5 font-bold text-slate-700 text-xs">{task.assignerName}</td>
-                  <td className="p-5">
+                  <td className="p-5 font-bold text-slate-700 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.assignerName}</td>
+                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-black text-white overflow-hidden">
-                        {users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar ? (
-                          <img src={users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" />
-                        ) : users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName.charAt(0)}
+                        {users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar ? ( <img src={users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" /> ) : users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName.charAt(0)}
                       </div>
                       <span className="text-xs font-bold text-slate-600 truncate max-w-[100px]">{users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName || 'N/A'}</span>
                     </div>
                   </td>
-                  <td className="p-5">
+                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
                     <div className="flex -space-x-2">
                       {task.supportAssigneeIds.slice(0, 3).map(uid => (
                         <div key={uid} className="w-6 h-6 rounded-full bg-slate-400 border-2 border-white flex items-center justify-center text-[8px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
@@ -222,20 +218,25 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                       {task.supportAssigneeIds.length > 3 && <div className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[8px] font-black text-slate-500">+{task.supportAssigneeIds.length - 3}</div>}
                     </div>
                   </td>
-                  <td className="p-5 font-bold text-slate-500 text-xs">{task.deadline}</td>
-                  <td className="p-5">
+                  <td className="p-5 font-bold text-slate-500 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.deadline}</td>
+                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
                     <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
                       <div className="bg-blue-600 h-full" style={{ width: `${task.progress}%` }} />
                     </div>
                     <span className="text-[10px] font-black text-blue-600 mt-1 block">{task.progress}%</span>
                   </td>
-                  <td className="p-5">
+                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
                     <span className={`px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${statusStyle[task.status]}`}>
                       {task.status}
                     </span>
                   </td>
                   <td className="p-5 text-right">
-                    <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-400"><MoreHorizontal size={16}/></button>
+                     {(currentUser.username === 'admin' || task.assignerId === currentUser.id) && (
+                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={(e) => { e.stopPropagation(); setFormData(task); setShowForm(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Sửa nhanh"><Edit2 size={16} /></button>
+                            <button onClick={async (e) => { e.stopPropagation(); if (confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', task.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16} /></button>
+                        </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -256,9 +257,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hình thức giao</label>
                   <select className="w-full border-2 p-3 rounded-xl bg-slate-50 font-bold outline-none" value={formData.assignmentSource} onChange={e => setFormData({...formData, assignmentSource: e.target.value})}>
-                    <option value="Direct">Trực tiếp</option>
-                    <option value="eOffice">eOffice</option>
-                    <option value="Zalo">Zalo</option>
+                    <option value="Direct">Trực tiếp</option> <option value="eOffice">eOffice</option> <option value="Zalo">Zalo</option>
                   </select>
                 </div>
                 {formData.assignmentSource === 'eOffice' && (
@@ -326,7 +325,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                 <div className="text-[10px] font-bold uppercase opacity-80 tracking-widest mt-2">Giao bởi: {selectedTask.assignerName} | Ngày giao: {selectedTask.dateAssigned}</div>
               </div>
               <div className="flex items-center gap-2">
-                {selectedTask.assignerId === currentUser.id && (
+                {(selectedTask.assignerId === currentUser.id || currentUser.username === 'admin') && (
                   <>
                     <button onClick={() => { setFormData(selectedTask); setShowForm(true); }} className="p-2 hover:bg-white/10 rounded-lg transition-colors" title="Chỉnh sửa"><Edit2 size={20}/></button>
                     <button onClick={async () => { if(confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', selectedTask.id); setSelectedTask(null); onRefresh(); }}} className="p-2 hover:bg-red-500 rounded-lg transition-colors" title="Xóa"><Trash2 size={20}/></button>
@@ -355,14 +354,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                   <div className="flex flex-wrap gap-2">
                     {selectedTask.supportAssigneeIds.length > 0 ? selectedTask.supportAssigneeIds.map(uid => {
                       const u = users.find(usr => usr.id === uid);
-                      return (
-                        <div key={uid} className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border">
-                           <div className="w-5 h-5 rounded-full bg-slate-400 flex items-center justify-center text-[8px] text-white font-black overflow-hidden">
-                              {u?.avatar ? <img src={u.avatar} className="w-full h-full object-cover" /> : u?.fullName.charAt(0)}
-                           </div>
-                           <span className="text-[10px] font-bold text-slate-600">{u?.fullName || 'Unknown'}</span>
-                        </div>
-                      );
+                      return ( <div key={uid} className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border"> <div className="w-5 h-5 rounded-full bg-slate-400 flex items-center justify-center text-[8px] text-white font-black overflow-hidden"> {u?.avatar ? <img src={u.avatar} className="w-full h-full object-cover" /> : u?.fullName.charAt(0)} </div> <span className="text-[10px] font-bold text-slate-600">{u?.fullName || 'Unknown'}</span> </div> );
                     }) : <span className="text-[10px] font-bold text-slate-400 italic">Không có nhân sự phối hợp</span>}
                   </div>
                 </div>
@@ -385,9 +377,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                   {selectedTask.executionResults || 'Chưa có báo cáo kết quả thực hiện.'}
                 </div>
                 {(selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && (
-                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-blue-700 transition-all">
-                     Cập nhật Báo cáo kết quả & Tiến độ
-                   </button>
+                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-blue-700 transition-all"> Cập nhật Báo cáo kết quả & Tiến độ </button>
                 )}
               </div>
 
@@ -407,9 +397,40 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                 </div>
                 <div className="space-y-1">
                    <h4 className="text-[10px] font-black text-slate-400 uppercase">Hạn hoàn thành</h4>
-                   <div className="pt-3 font-black text-red-600 text-sm flex items-center gap-2"><Clock size={16}/> {selectedTask.deadline}</div>
+                   <div className="pt-3 font-black text-red-600 text-sm flex items-center gap-2">
+                     <Clock size={16}/> {selectedTask.deadline}
+                     {(selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && !selectedTask.extensionRequest && (
+                       <button onClick={() => handleRequestExtension(selectedTask)} className="ml-2 text-blue-500 hover:text-blue-700 p-2 bg-blue-50 rounded-xl transition-colors" title="Xin gia hạn"><CalendarPlus size={16}/></button>
+                     )}
+                   </div>
                 </div>
               </div>
+
+              {selectedTask.extensionRequest && (
+                <div className="mt-8">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-3"><AlertTriangle size={14}/> Yêu cầu gia hạn</h4>
+                  <div className={`p-6 rounded-3xl border-2 ${ selectedTask.extensionRequest.status === 'pending' ? 'bg-amber-50 border-amber-200' : selectedTask.extensionRequest.status === 'approved' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200' }`}>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-bold text-slate-700"> Xin gia hạn đến ngày: <span className="font-black text-red-600">{selectedTask.extensionRequest.requestedDate}</span> </p>
+                        <p className="text-xs text-slate-500 mt-2"> <span className="font-bold">Lý do:</span> {selectedTask.extensionRequest.reason} </p>
+                         {selectedTask.extensionRequest.status === 'rejected' && selectedTask.extensionRequest.rejectionReason && (
+                           <p className="text-xs text-red-500 mt-2 font-bold italic"> Lý do từ chối: {selectedTask.extensionRequest.rejectionReason} </p>
+                         )}
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${ selectedTask.extensionRequest.status === 'pending' ? 'bg-amber-200 text-amber-800' : selectedTask.extensionRequest.status === 'approved' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800' }`}>
+                        {selectedTask.extensionRequest.status === 'pending' ? 'Chờ duyệt' : selectedTask.extensionRequest.status === 'approved' ? 'Đã duyệt' : 'Từ chối'}
+                      </span>
+                    </div>
+                    {selectedTask.assignerId === currentUser.id && selectedTask.extensionRequest.status === 'pending' && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 flex justify-end gap-3">
+                        <button onClick={() => rejectExtension(selectedTask)} className="bg-red-500 text-white px-4 py-2 rounded-lg text-xs font-black uppercase">Từ chối</button>
+                        <button onClick={() => approveExtension(selectedTask)} className="bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-black uppercase">Phê duyệt</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="p-8 border-t bg-slate-50 flex justify-end shrink-0">
               <button onClick={() => setSelectedTask(null)} className="bg-slate-800 text-white px-10 py-3.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-black transition-all">Đóng cửa sổ</button>
