@@ -79,7 +79,6 @@ export interface Task {
   difficulties?: string; // Báo cáo vướng mắc
   extensionRequest?: ExtensionRequest;
   timeline?: TaskTimeline[];
-  // New Fields
   assignmentSource: 'eOffice' | 'Zalo' | 'Direct' | string;
   eOfficeNumber?: string;
   coordinationInstructions?: string; // Chỉ đạo phối hợp
@@ -87,6 +86,17 @@ export interface Task {
   type?: string;
   projectId?: string;
   createdAt?: string;
+}
+
+export interface PersonalTask {
+  id: string;
+  userId: string;
+  name: string;
+  content: string;
+  deadline: string;
+  status: 'Chưa xử lý' | 'Đang xử lý' | 'Đã hoàn thành';
+  note: string;
+  createdAt: string;
 }
 
 export const KPI_KEYS = {

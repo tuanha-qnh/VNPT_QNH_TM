@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Task, TaskStatus, TaskPriority, User, Unit, Role } from '../types';
-import { Plus, Search, X, Edit2, Trash2, Save, Loader2, MessageSquare, Timer, Filter, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, X, Edit2, Trash2, Save, Loader2, Timer, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal, UserCheck, Users } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 
 interface TasksProps {
@@ -26,45 +26,51 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     supportAssigneeIds: []
   });
 
+  // Xác định người dùng có phải lãnh đạo hay không
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
 
-  // Logic lọc danh sách nhân sự có thể giao việc dựa trên phân cấp (Thực hiện theo yêu cầu mới nhất)
   const assignableUsers = useMemo(() => {
-    // 1. Chỉ lấy nhân sự trong cùng đơn vị và loại bỏ chính người giao việc
     let list = users.filter(u => u.unitId === currentUser.unitId && u.id !== currentUser.id);
-
-    // 2. Logic phân tầng chức danh
     if (currentUser.title === Role.VICE_DIRECTOR) {
-      // Phó Giám đốc giao được cho: Trưởng phòng, Phó phòng, Chuyên viên, Nhân viên
       const subordinates = [Role.MANAGER, Role.VICE_MANAGER, Role.SPECIALIST, Role.STAFF];
       list = list.filter(u => subordinates.includes(u.title as Role));
     } else if (currentUser.title === Role.VICE_MANAGER) {
-      // Phó phòng chỉ giao được cho: Chuyên viên, Nhân viên
       const subordinates = [Role.SPECIALIST, Role.STAFF];
       list = list.filter(u => subordinates.includes(u.title as Role));
     }
-    
-    // Giám đốc và Trưởng phòng mặc định nhìn thấy toàn bộ cấp dưới cùng đơn vị
     return list;
   }, [users, currentUser]);
 
   const filteredTasks = useMemo(() => {
     let list = [...tasks];
+    
+    // Phân quyền hiển thị: Lãnh đạo xem hết của đơn vị, Nhân viên chỉ xem việc liên quan
+    if (currentUser.username !== 'admin') {
+      if (isLeader) {
+        // Lãnh đạo xem việc mình giao, việc mình làm, và việc của đơn vị mình phụ trách
+        list = list.filter(t => 
+          t.assignerId === currentUser.id ||
+          t.primaryAssigneeIds.includes(currentUser.id) || 
+          t.supportAssigneeIds.includes(currentUser.id) ||
+          myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || '')
+        );
+      } else {
+        // Nhân viên: Chỉ xem việc mình là Người giao, Chủ trì hoặc Phối hợp
+        list = list.filter(t => 
+          t.assignerId === currentUser.id ||
+          t.primaryAssigneeIds.includes(currentUser.id) || 
+          t.supportAssigneeIds.includes(currentUser.id)
+        );
+      }
+    }
+
     if (searchTerm) list = list.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()));
     if (filterStatus !== 'all') list = list.filter(t => t.status === filterStatus);
     if (filterMonth) list = list.filter(t => t.dateAssigned.startsWith(filterMonth));
     
-    if (currentUser.username !== 'admin') {
-      list = list.filter(t => 
-        t.assignerId === currentUser.id ||
-        t.primaryAssigneeIds.includes(currentUser.id) || 
-        t.supportAssigneeIds.includes(currentUser.id) ||
-        myAccessibleUnits.includes(users.find(u => u.id === t.assignerId)?.unitId || '')
-      );
-    }
     return list;
-  }, [tasks, searchTerm, filterStatus, filterMonth, currentUser, myAccessibleUnits, users]);
+  }, [tasks, searchTerm, filterStatus, filterMonth, currentUser, isLeader, myAccessibleUnits, users]);
 
   const statusStyle: Record<TaskStatus, string> = {
     [TaskStatus.PENDING]: 'bg-slate-100 text-slate-500',
@@ -174,55 +180,62 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
           <table className="w-full text-sm text-left border-collapse">
             <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest border-b">
               <tr>
-                <th className="p-5 w-12 text-center">#</th>
-                <th className="p-5 min-w-[300px]">Tên công việc</th>
+                <th className="p-5">Ngày giao</th>
+                <th className="p-5 min-w-[250px]">Tên công việc</th>
                 <th className="p-5">Người giao</th>
                 <th className="p-5">Chủ trì</th>
+                <th className="p-5">Phối hợp</th>
+                <th className="p-5">Hạn hoàn thành</th>
+                <th className="p-5">Tiến độ</th>
                 <th className="p-5">Trạng thái</th>
-                <th className="p-5 text-center">Thao tác</th>
+                <th className="p-5 text-center"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {filteredTasks.map((task, idx) => (
-                <tr key={task.id} className="group hover:bg-blue-50/40 transition-all cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-500">
-                  <td className="p-5 text-center text-slate-300 font-black" onClick={() => setSelectedTask(task)}>{idx + 1}</td>
-                  <td className="p-5" onClick={() => setSelectedTask(task)}>
+                <tr key={task.id} className="group hover:bg-blue-50/40 transition-all cursor-pointer border-l-4 border-l-transparent hover:border-l-blue-500" onClick={() => setSelectedTask(task)}>
+                  <td className="p-5 font-bold text-slate-500 text-xs">{task.dateAssigned}</td>
+                  <td className="p-5">
                     <div className="flex items-center gap-2 mb-1">
-                      {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> eOffice: {task.eOfficeNumber}</span>}
-                      {task.assignmentSource === 'Zalo' && <span className="flex items-center gap-1 bg-green-100 text-green-700 px-2 py-0.5 rounded text-[9px] font-black"><MessageCircle size={10}/> Zalo</span>}
-                      {task.assignmentSource === 'Direct' && <span className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[9px] font-black"><Smartphone size={10}/> Trực tiếp</span>}
-                      {task.extensionRequest?.status === 'pending' && <span className="bg-red-500 text-white px-2 py-0.5 rounded text-[9px] font-black animate-pulse">CHỜ GIA HẠN</span>}
+                      {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> {task.eOfficeNumber}</span>}
                     </div>
-                    <div className="font-black text-slate-800 text-base">{task.name}</div>
-                    <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1"><Clock size={10}/> Hạn: {task.deadline}</div>
+                    <div className="font-black text-slate-800 text-sm break-words line-clamp-2">{task.name}</div>
                   </td>
-                  <td className="p-5" onClick={() => setSelectedTask(task)}>
-                    <div className="text-xs font-bold text-slate-700">{task.assignerName}</div>
+                  <td className="p-5 font-bold text-slate-700 text-xs">{task.assignerName}</td>
+                  <td className="p-5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-black text-white overflow-hidden">
+                        {users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar ? (
+                          <img src={users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" />
+                        ) : users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName.charAt(0)}
+                      </div>
+                      <span className="text-xs font-bold text-slate-600 truncate max-w-[100px]">{users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName || 'N/A'}</span>
+                    </div>
                   </td>
-                  <td className="p-5" onClick={() => setSelectedTask(task)}>
+                  <td className="p-5">
                     <div className="flex -space-x-2">
-                      {task.primaryAssigneeIds.slice(0, 3).map(uid => (
-                        <div key={uid} className="w-8 h-8 rounded-full bg-blue-600 border-2 border-white flex items-center justify-center text-[10px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
+                      {task.supportAssigneeIds.slice(0, 3).map(uid => (
+                        <div key={uid} className="w-6 h-6 rounded-full bg-slate-400 border-2 border-white flex items-center justify-center text-[8px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
                           {users.find(u => u.id === uid)?.fullName.charAt(0)}
                         </div>
                       ))}
+                      {task.supportAssigneeIds.length > 3 && <div className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[8px] font-black text-slate-500">+{task.supportAssigneeIds.length - 3}</div>}
                     </div>
                   </td>
-                  <td className="p-5" onClick={() => setSelectedTask(task)}>
-                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${statusStyle[task.status]}`}>
+                  <td className="p-5 font-bold text-slate-500 text-xs">{task.deadline}</td>
+                  <td className="p-5">
+                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-blue-600 h-full" style={{ width: `${task.progress}%` }} />
+                    </div>
+                    <span className="text-[10px] font-black text-blue-600 mt-1 block">{task.progress}%</span>
+                  </td>
+                  <td className="p-5">
+                    <span className={`px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${statusStyle[task.status]}`}>
                       {task.status}
                     </span>
                   </td>
-                  <td className="p-5 text-center">
-                    <div className="flex justify-center gap-2">
-                      {task.assignerId === currentUser.id && (
-                        <>
-                          <button onClick={(e) => { e.stopPropagation(); setFormData(task); setShowForm(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"><Edit2 size={16}/></button>
-                          <button onClick={(e) => { e.stopPropagation(); if(confirm("Xóa vĩnh viễn công việc này?")) { dbClient.delete('tasks', task.id); onRefresh(); } }} className="p-2 hover:bg-red-100 rounded-lg text-red-500 transition-colors"><Trash2 size={16}/></button>
-                        </>
-                      )}
-                      <button onClick={(e) => { e.stopPropagation(); setSelectedTask(task); }} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 transition-colors"><MoreHorizontal size={16}/></button>
-                    </div>
+                  <td className="p-5 text-right">
+                    <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-400"><MoreHorizontal size={16}/></button>
                   </td>
                 </tr>
               ))}
@@ -305,109 +318,101 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
       )}
 
       {selectedTask && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex justify-end">
-          <div className="bg-white w-full max-w-2xl h-full shadow-2xl animate-slide-in flex flex-col">
-            <div className="p-8 border-b flex justify-between items-center bg-blue-600 text-white shadow-lg">
-              <div className="flex-1 pr-4">
-                <h3 className="text-xl font-black truncate">{selectedTask.name}</h3>
-                <div className="text-[9px] font-bold uppercase opacity-80 tracking-widest mt-1">Giao bởi: {selectedTask.assignerName}</div>
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-[60%] rounded-[48px] shadow-2xl animate-zoom-in flex flex-col max-h-[90vh] overflow-hidden border">
+            <div className="p-8 border-b flex justify-between items-center bg-blue-600 text-white shadow-lg shrink-0">
+              <div className="flex-1 pr-10">
+                <h3 className="text-2xl font-black break-words leading-tight">{selectedTask.name}</h3>
+                <div className="text-[10px] font-bold uppercase opacity-80 tracking-widest mt-2">Giao bởi: {selectedTask.assignerName} | Ngày giao: {selectedTask.dateAssigned}</div>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 {selectedTask.assignerId === currentUser.id && (
                   <>
                     <button onClick={() => { setFormData(selectedTask); setShowForm(true); }} className="p-2 hover:bg-white/10 rounded-lg transition-colors" title="Chỉnh sửa"><Edit2 size={20}/></button>
                     <button onClick={async () => { if(confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', selectedTask.id); setSelectedTask(null); onRefresh(); }}} className="p-2 hover:bg-red-500 rounded-lg transition-colors" title="Xóa"><Trash2 size={20}/></button>
                   </>
                 )}
-                <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={24}/></button>
+                <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={28}/></button>
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-8 space-y-8">
-              {/* PHẦN DUYỆT GIA HẠN DÀNH CHO NGƯỜI GIAO VIỆC */}
-              {selectedTask.extensionRequest?.status === 'pending' && selectedTask.assignerId === currentUser.id && (
-                <div className="bg-red-50 border-2 border-red-200 p-6 rounded-[28px] space-y-4 animate-pulse-slow">
-                  <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><AlertTriangle size={16}/> ĐỀ NGHỊ GIA HẠN THỜI GIAN</h4>
-                  <div className="bg-white p-4 rounded-xl border border-red-100 text-xs font-bold space-y-2">
-                    <p>Lý do: <span className="italic">"{selectedTask.extensionRequest.reason}"</span></p>
-                    <p>Đề xuất hạn mới: <span className="text-red-600 underline font-black">{selectedTask.extensionRequest.requestedDate}</span></p>
-                    <div className="flex gap-2 pt-2">
-                      <button onClick={() => approveExtension(selectedTask)} className="flex-1 bg-green-600 text-white py-2.5 rounded-lg font-black uppercase text-[9px] hover:bg-green-700">Đồng ý gia hạn</button>
-                      <button onClick={async () => { await dbClient.update('tasks', selectedTask.id, { extensionRequest: { ...selectedTask.extensionRequest!, status: 'rejected' } }); onRefresh(); setSelectedTask(null); }} className="flex-1 bg-slate-200 text-slate-600 py-2.5 rounded-lg font-black uppercase text-[9px] hover:bg-slate-300">Từ chối</button>
+            <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><UserCheck size={14}/> Nhân sự chủ trì</h4>
+                  <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border">
+                    <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-black overflow-hidden">
+                       {users.find(u => u.id === selectedTask.primaryAssigneeIds[0])?.avatar ? <img src={users.find(u => u.id === selectedTask.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" /> : users.find(u => u.id === selectedTask.primaryAssigneeIds[0])?.fullName.charAt(0)}
+                    </div>
+                    <div>
+                      <div className="font-black text-slate-800 text-sm">{users.find(u => u.id === selectedTask.primaryAssigneeIds[0])?.fullName || 'N/A'}</div>
+                      <div className="text-[9px] font-bold text-blue-600 uppercase">{users.find(u => u.id === selectedTask.primaryAssigneeIds[0])?.title}</div>
                     </div>
                   </div>
                 </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-5 rounded-2xl border">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Chỉ đạo Chủ trì</h4>
-                  <p className="text-sm font-bold text-slate-700 whitespace-pre-line leading-relaxed">{selectedTask.content}</p>
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Users size={14}/> Nhân sự phối hợp</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTask.supportAssigneeIds.length > 0 ? selectedTask.supportAssigneeIds.map(uid => {
+                      const u = users.find(usr => usr.id === uid);
+                      return (
+                        <div key={uid} className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border">
+                           <div className="w-5 h-5 rounded-full bg-slate-400 flex items-center justify-center text-[8px] text-white font-black overflow-hidden">
+                              {u?.avatar ? <img src={u.avatar} className="w-full h-full object-cover" /> : u?.fullName.charAt(0)}
+                           </div>
+                           <span className="text-[10px] font-bold text-slate-600">{u?.fullName || 'Unknown'}</span>
+                        </div>
+                      );
+                    }) : <span className="text-[10px] font-bold text-slate-400 italic">Không có nhân sự phối hợp</span>}
+                  </div>
                 </div>
-                <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
-                  <h4 className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-2">Chỉ đạo Phối hợp</h4>
-                  <p className="text-sm font-bold text-blue-700 whitespace-pre-line leading-relaxed">{selectedTask.coordinationInstructions || 'Không có chỉ đạo phối hợp riêng.'}</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <div className="bg-slate-50 p-6 rounded-3xl border">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Chỉ đạo Chủ trì</h4>
+                  <p className="text-sm font-bold text-slate-700 whitespace-pre-line leading-relaxed break-words">{selectedTask.content}</p>
+                </div>
+                <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-100">
+                  <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-3">Chỉ đạo Phối hợp</h4>
+                  <p className="text-sm font-bold text-blue-700 whitespace-pre-line leading-relaxed break-words">{selectedTask.coordinationInstructions || 'Không có chỉ đạo phối hợp riêng.'}</p>
                 </div>
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={14}/> Kết quả thực hiện</h4>
-                <div className="bg-slate-50 border-2 rounded-2xl p-5 text-slate-700 font-bold text-sm min-h-[80px] whitespace-pre-line">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={14}/> Kết quả thực hiện</h4>
+                <div className="bg-slate-50 border-2 rounded-3xl p-6 text-slate-700 font-bold text-sm min-h-[100px] whitespace-pre-line break-words italic">
                   {selectedTask.executionResults || 'Chưa có báo cáo kết quả thực hiện.'}
                 </div>
                 {(selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && (
-                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all">
-                     Báo cáo kết quả & Tiến độ
+                   <button onClick={() => handleAddTimeline(selectedTask)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-blue-700 transition-all">
+                     Cập nhật Báo cáo kết quả & Tiến độ
                    </button>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-3 gap-6">
                 <div className="space-y-1">
-                  <h4 className="text-[9px] font-black text-slate-400 uppercase">Trạng thái</h4>
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase">Trạng thái</h4>
                   <select className={`w-full p-3 rounded-xl text-[10px] font-black uppercase border-2 outline-none ${statusStyle[selectedTask.status]}`} value={selectedTask.status} onChange={(e) => handleUpdateStatus(selectedTask, e.target.value as TaskStatus)} disabled={selectedTask.assignerId !== currentUser.id && !selectedTask.primaryAssigneeIds.includes(currentUser.id)}>
                     {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1">
-                   <h4 className="text-[9px] font-black text-slate-400 uppercase">Tiến độ (%)</h4>
-                   <div className="flex items-center gap-3">
-                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${selectedTask.progress}%` }} /></div>
+                   <h4 className="text-[10px] font-black text-slate-400 uppercase">Tiến độ (%)</h4>
+                   <div className="flex items-center gap-3 pt-3">
+                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${selectedTask.progress}%` }} /></div>
                       <span className="font-black text-blue-600 text-xs">{selectedTask.progress}%</span>
                    </div>
                 </div>
-              </div>
-
-              {/* PHẦN ĐỀ NGHỊ GIA HẠN DÀNH CHO NHÂN VIÊN */}
-              {selectedTask.primaryAssigneeIds.includes(currentUser.id) && selectedTask.assignerId !== currentUser.id && (
-                <div className="bg-red-50 p-6 rounded-[32px] border-2 border-red-100 space-y-4">
-                  <h4 className="text-xs font-black text-red-600 uppercase flex items-center gap-2"><Timer size={16}/> ĐỀ NGHỊ GIA HẠN DEADLINE</h4>
-                  {selectedTask.extensionRequest?.status === 'pending' ? (
-                    <div className="text-center py-2 bg-white rounded-xl border border-red-100"><span className="text-red-500 font-black text-[10px] uppercase animate-pulse">Đã gửi đề nghị. Đang đợi lãnh đạo phê duyệt...</span></div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="space-y-1">
-                         <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Hạn đề xuất mới</label>
-                         <input id="extDate" type="date" className="w-full border p-3 rounded-xl font-black text-xs outline-none focus:border-red-400" />
-                      </div>
-                      <div className="space-y-1">
-                         <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Lý do xin gia hạn</label>
-                         <textarea id="extReason" className="w-full border p-3 rounded-xl font-bold text-xs h-20 outline-none focus:border-red-400 resize-none" placeholder="Giải trình lý do chưa hoàn thành đúng hạn..." />
-                      </div>
-                      <button onClick={async () => {
-                        const date = (document.getElementById('extDate') as HTMLInputElement).value;
-                        const reason = (document.getElementById('extReason') as HTMLTextAreaElement).value;
-                        if(!date || !reason) return alert("Vui lòng điền đủ ngày và lý do!");
-                        await dbClient.update('tasks', selectedTask.id, { extensionRequest: { requestedDate: date, reason, status: 'pending', requestDate: new Date().toISOString() } });
-                        onRefresh(); setSelectedTask(null); alert("Đã gửi đề nghị gia hạn!");
-                      }} className="w-full py-3.5 bg-red-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-red-100 hover:bg-red-700 transition-all">Gửi yêu cầu gia hạn</button>
-                    </div>
-                  )}
+                <div className="space-y-1">
+                   <h4 className="text-[10px] font-black text-slate-400 uppercase">Hạn hoàn thành</h4>
+                   <div className="pt-3 font-black text-red-600 text-sm flex items-center gap-2"><Clock size={16}/> {selectedTask.deadline}</div>
                 </div>
-              )}
+              </div>
             </div>
-            <div className="p-8 border-t bg-slate-50 flex justify-end">
-              <button onClick={() => setSelectedTask(null)} className="bg-slate-800 text-white px-10 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-black transition-all">Đóng cửa sổ</button>
+            <div className="p-8 border-t bg-slate-50 flex justify-end shrink-0">
+              <button onClick={() => setSelectedTask(null)} className="bg-slate-800 text-white px-10 py-3.5 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-black transition-all">Đóng cửa sổ</button>
             </div>
           </div>
         </div>

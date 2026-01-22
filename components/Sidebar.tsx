@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, Users, CheckSquare, BarChart2, Settings, Menu, PieChart } from 'lucide-react';
+import { LayoutDashboard, Users, CheckSquare, BarChart2, Settings, Menu, PieChart, StickyNote } from 'lucide-react';
 import { User } from '../types';
 
 interface SidebarProps {
@@ -17,9 +17,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
 
   const menuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: <LayoutDashboard size={20} /> },
-    // Chỉ hiện Quản trị nếu là Admin hệ thống hoặc Admin đơn vị
-    (isSystemAdmin || isUnitAdmin) ? { id: 'admin', label: 'Quản trị nhân sự', icon: <Users size={20} /> } : null,
     { id: 'tasks', label: 'Quản lý công việc', icon: <CheckSquare size={20} /> },
+    { id: 'personal-tasks', label: 'Công việc cá nhân', icon: <StickyNote size={20} /> },
+    (isSystemAdmin || isUnitAdmin) ? { id: 'admin', label: 'Quản trị nhân sự', icon: <Users size={20} /> } : null,
     { type: 'divider' },
     { id: 'kpi-group', label: 'KPI Tập thể', icon: <PieChart size={20} /> },
     { id: 'kpi-personal', label: 'KPI Cá nhân', icon: <BarChart2 size={20} /> },
@@ -50,7 +50,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
                   title={!isOpen ? item.label : ''}
                 >
                   <span className="shrink-0">{item.icon}</span>
-                  {isOpen && <span className="ml-3 truncate">{item.label}</span>}
+                  {isOpen && <span className="ml-3 truncate font-bold text-sm tracking-tight">{item.label}</span>}
                 </button>
               </li>
             );
@@ -65,12 +65,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
           title={!isOpen ? 'Cài đặt' : ''}
         >
           <Settings size={20} />
-          {isOpen && <span className="ml-3">Cài đặt</span>}
+          {isOpen && <span className="ml-3 font-bold text-sm">Cài đặt</span>}
         </button>
         
         {isOpen && (
-            <div className="px-4 text-[10px] text-gray-500 text-center pt-2">
-                Version 1.5.2 (Secured)
+            <div className="px-4 text-[10px] text-gray-500 text-center pt-2 font-bold uppercase tracking-widest">
+                v1.9.5 Secure
             </div>
         )}
       </div>

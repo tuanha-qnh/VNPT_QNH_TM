@@ -6,6 +6,7 @@ import Admin from './modules/Admin';
 import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
+import PersonalTasks from './modules/PersonalTasks';
 import { dbClient } from './utils/firebaseClient'; 
 import { Task, Unit, User, Role } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
@@ -167,6 +168,7 @@ const App: React.FC = () => {
       case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
+      case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
@@ -184,7 +186,7 @@ const App: React.FC = () => {
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.9 (Firebase)</p>
+                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.9.5 (Firebase)</p>
                   </div>
                   <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
                       <div className="space-y-1.5">
