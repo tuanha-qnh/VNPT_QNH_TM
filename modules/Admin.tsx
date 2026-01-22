@@ -1,8 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Unit, User, Role } from '../types';
-// Fixed: Added Users2 to the imports from lucide-react to resolve "Cannot find name 'Users2'" error.
-import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye, Info, LayoutGrid, GitMerge, Users2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye, Info, LayoutGrid, GitMerge, Users2, FileSpreadsheet, KeyRound, CheckSquare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
 import md5 from 'md5';
@@ -56,15 +55,17 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         unitId: currentUser.unitId, 
         title: Role.STAFF, 
         accessibleUnitIds: [currentUser.unitId], 
-        canManageUsers: false 
+        canManageUsers: false,
+        password: '123'
       });
     } else {
+      const rootUnit = units.find(u => u.level === 0 || u.code === 'VNPT_QN');
       setEditingItem(null);
       setFormData({ 
         name: '', 
         code: `QNH${Math.floor(Math.random() * 900) + 100}`, 
-        parentId: units[0]?.id || null, 
-        level: 1 
+        parentId: rootUnit?.id || null, 
+        level: rootUnit ? rootUnit.level + 1 : 1 
       });
     }
     setIsModalOpen(true);
@@ -83,17 +84,17 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         await dbClient.upsert('units', id, { ...formData, level });
       } else {
         if (!formData.fullName || !formData.hrmCode || !formData.username) throw new Error("Vui lòng nhập đủ thông tin nhân sự.");
+        
         const finalUnitId = (isSubAdmin && !isSystemAdmin) ? currentUser.unitId : (formData.unitId || currentUser.unitId);
-        const canManageUsersValue = isSystemAdmin ? (formData.canManageUsers || false) : (editingItem ? editingItem.canManageUsers : false);
-
+        
         const payload = {
           ...formData, 
           unitId: finalUnitId,
-          canManageUsers: canManageUsersValue,
-          password: formData.newPassword ? md5(formData.newPassword) : (editingItem ? editingItem.password : md5(formData.password || '123')),
+          // Nếu tạo mới thì băm pass, nếu sửa thì giữ nguyên trừ khi được reset bên ngoài
+          password: editingItem ? editingItem.password : md5(formData.password || '123'),
+          isFirstLogin: editingItem ? editingItem.isFirstLogin : true,
           accessibleUnitIds: formData.accessibleUnitIds && formData.accessibleUnitIds.length > 0 ? formData.accessibleUnitIds : [finalUnitId]
         };
-        delete payload.newPassword;
         await dbClient.upsert('users', id, payload);
       }
       setIsModalOpen(false);
@@ -103,6 +104,74 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
     } finally { 
       setIsProcessing(false); 
     }
+  };
+
+  const handleResetPassword = async () => {
+    if (!editingItem) return;
+    if (confirm("Reset mật khẩu nhân viên này về mặc định '123'?")) {
+      await dbClient.update('users', editingItem.id, { password: md5('123'), isFirstLogin: true });
+      alert("Đã reset mật khẩu thành công!");
+      onRefresh();
+      setIsModalOpen(false);
+    }
+  };
+
+  const downloadTemplate = () => {
+    const data = [
+      ["Họ và tên", "Mã HRM", "Mã đơn vị", "Username", "Mật khẩu", "Chức danh", "Là SubAdmin (Yes/No)"],
+      ["Nguyễn Văn A", "HRM001", "QNH102", "anv", "123", "Chuyên viên", "No"],
+      ["Trần Thị B", "HRM002", "QNH103", "btt", "123", "Trưởng phòng", "Yes"]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "VNPT_Import_NhanSu_Mau.xlsx");
+  };
+
+  const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data: any[] = XLSX.utils.sheet_to_json(ws);
+        
+        setIsProcessing(true);
+        for (const row of data) {
+          const fullName = row["Họ và tên"];
+          const hrmCode = row["Mã HRM"];
+          const unitCode = row["Mã đơn vị"];
+          const username = row["Username"];
+          const password = String(row["Mật khẩu"] || '123');
+          const title = row["Chức danh"];
+          const isSubAdminImport = String(row["Là SubAdmin (Yes/No)"]).toLowerCase() === 'yes';
+
+          const unit = units.find(u => u.code === unitCode);
+          if (unit && fullName && hrmCode && username) {
+            const userId = `user_imp_${hrmCode}`;
+            await dbClient.upsert('users', userId, {
+              fullName, hrmCode, username, 
+              password: md5(password), 
+              title, 
+              unitId: unit.id,
+              canManageUsers: isSubAdminImport,
+              isFirstLogin: true,
+              accessibleUnitIds: [unit.id]
+            });
+          }
+        }
+        alert("Import hoàn tất!");
+        onRefresh();
+      } catch (err) {
+        alert("Lỗi khi đọc file Excel.");
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
   const UnitNode: React.FC<{ item: any, level: number }> = ({ item, level }) => {
@@ -170,6 +239,17 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           </div>
           {canModify && (
             <div className="flex gap-2">
+              {activeTab === 'users' && (
+                <>
+                  <button onClick={downloadTemplate} className="bg-slate-100 text-slate-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-slate-200">
+                    <Download size={16}/> File mẫu
+                  </button>
+                  <label className="bg-green-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-green-700 cursor-pointer shadow-lg shadow-green-100">
+                    <FileSpreadsheet size={16}/> Import Excel
+                    <input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} />
+                  </label>
+                </>
+              )}
               <button onClick={handleOpenAddModal} className="bg-blue-600 text-white px-8 py-2.5 rounded-xl text-xs font-black uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all">
                 <Plus size={18}/> {activeTab === 'users' ? 'Thêm nhân sự' : 'Thêm đơn vị'}
               </button>
@@ -196,7 +276,9 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                   <tr key={user.id} className="hover:bg-blue-50/30 transition-colors group">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-black border uppercase">{user.fullName.charAt(0)}</div>
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-black border uppercase overflow-hidden">
+                           {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" /> : user.fullName.charAt(0)}
+                        </div>
                         <div>
                           <div className="font-bold text-slate-800">{user.fullName}</div>
                           <div className="flex gap-1 mt-1">
@@ -229,7 +311,7 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
 
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[40px] w-full max-w-2xl shadow-2xl overflow-hidden animate-zoom-in border">
+          <div className="bg-white rounded-[40px] w-full max-w-4xl shadow-2xl overflow-hidden animate-zoom-in border">
             <div className="p-8 border-b bg-slate-50/50 flex justify-between items-center">
               <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
                 {activeTab === 'users' ? (editingItem ? 'CẬP NHẬT NHÂN SỰ' : 'THÊM MỚI NHÂN SỰ') : (editingItem ? 'CẬP NHẬT ĐƠN VỊ' : 'TẠO MỚI ĐƠN VỊ')}
@@ -237,9 +319,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><X size={24}/></button>
             </div>
             
-            <div className="p-10 space-y-6 max-h-[75vh] overflow-y-auto">
+            <div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
               {activeTab === 'units' ? (
-                // FORM NHẬP LIỆU ĐƠN VỊ
                 <div className="space-y-6">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tên đơn vị / Phòng ban</label>
@@ -253,45 +334,83 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Đơn vị cấp trên</label>
                       <select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold outline-none focus:border-blue-500" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value || null})}>
-                        <option value="">-- Là đơn vị gốc --</option>
                         {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                       </select>
                     </div>
                   </div>
                 </div>
               ) : (
-                // FORM NHẬP LIỆU NHÂN SỰ
-                <div className="grid grid-cols-2 gap-5">
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Họ và tên</label>
-                    <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold outline-none" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã HRM</label>
-                    <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Username</label>
-                    <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Chức danh</label>
-                    <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}>
-                      {Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Đơn vị</label>
-                    <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.unitId} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={isSubAdmin && !isSystemAdmin}>
-                      {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
-                  </div>
-                  {isSystemAdmin && (
-                    <div className="col-span-2 p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border border-blue-100">
-                      <input type="checkbox" id="chkSubAdmin" className="w-5 h-5 rounded text-blue-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
-                      <label htmlFor="chkSubAdmin" className="text-xs font-black text-blue-800 uppercase">Gán quyền SubAdmin (Quản trị nhân sự đơn vị)</label>
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="col-span-2 grid grid-cols-2 gap-5">
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Họ và tên</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold outline-none" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} />
                     </div>
-                  )}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã HRM</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Username</label>
+                      <input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} />
+                    </div>
+                    {!editingItem ? (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mật khẩu đăng nhập</label>
+                        <input type="password" placeholder="Mặc định: 123" className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 outline-none font-bold" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} />
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Quản lý bảo mật</label>
+                        <button onClick={handleResetPassword} className="w-full bg-slate-100 text-slate-700 p-3.5 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-slate-200">
+                           <KeyRound size={16}/> Reset Password về 123
+                        </button>
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Chức danh</label>
+                      <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}>
+                        {Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Đơn vị công tác</label>
+                      <select className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.unitId} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={isSubAdmin && !isSystemAdmin}>
+                        {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </div>
+                    {isSystemAdmin && (
+                      <div className="col-span-2 p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border border-blue-100">
+                        <input type="checkbox" id="chkSubAdmin" className="w-5 h-5 rounded text-blue-600" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} />
+                        <label htmlFor="chkSubAdmin" className="text-xs font-black text-blue-800 uppercase">Gán quyền SubAdmin (Quản trị nhân sự đơn vị)</label>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="col-span-2 space-y-4">
+                    <div className="flex items-center gap-2 border-b-2 pb-2">
+                       <CheckSquare className="text-blue-600" size={18}/>
+                       <label className="text-xs font-black text-slate-800 uppercase tracking-tight">Phân quyền xem dữ liệu (Theo đơn vị)</label>
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-400 italic">Chọn các đơn vị mà nhân sự này được phép xem toàn bộ công việc và KPI:</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[250px] overflow-y-auto p-2 border rounded-2xl bg-slate-50">
+                       {units.map(u => (
+                         <label key={u.id} className="flex items-center gap-2 p-2 hover:bg-white rounded-lg cursor-pointer transition-colors">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 rounded text-blue-600" 
+                              checked={(formData.accessibleUnitIds || []).includes(u.id)}
+                              onChange={e => {
+                                const current = formData.accessibleUnitIds || [];
+                                if(e.target.checked) setFormData({...formData, accessibleUnitIds: [...current, u.id]});
+                                else setFormData({...formData, accessibleUnitIds: current.filter((id: string) => id !== u.id)});
+                              }}
+                            />
+                            <span className="text-[11px] font-bold text-slate-600 truncate">{u.name}</span>
+                         </label>
+                       ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
