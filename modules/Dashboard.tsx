@@ -2,8 +2,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { Task, TaskStatus, Unit, User, KPI_KEYS, Role, KPIKey, PersonalTask } from '../types';
-import { AlertCircle, CheckCircle, Clock, TrendingUp, Activity, Zap, Briefcase, Calendar as CalendarIcon, Smartphone, StickyNote, ArrowRight } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, TrendingUp, Activity, Zap, Briefcase, Calendar as CalendarIcon, Smartphone, StickyNote, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
+import * as XLSX from 'xlsx';
 
 interface DashboardProps {
   tasks: Task[];
@@ -11,10 +12,12 @@ interface DashboardProps {
   users: User[];
   currentUser: User;
   groupKpi: any[];
+  onRefresh: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi }) => {
+const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, onRefresh }) => {
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
 
@@ -25,6 +28,75 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
     };
     fetchPersonal();
   }, [currentUser.id]);
+
+  const handleSyncKpi = async () => {
+    setIsSyncing(true);
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    try {
+        const modes: ('personal' | 'group')[] = ['personal', 'group'];
+        let totalSynced = 0;
+        let syncedModes = [];
+
+        for (const mode of modes) {
+            const configStr = localStorage.getItem(`ds_config_v4_${mode}`);
+            if (!configStr) continue;
+
+            const config = JSON.parse(configStr);
+            if (!config.url || !config.mapping?.id) continue;
+
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) {
+                finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            }
+            
+            const res = await fetch(finalUrl);
+            if (!res.ok) {
+                console.warn(`Could not fetch KPI data for ${mode} from ${finalUrl}`);
+                continue;
+            }
+            
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+            let count = 0;
+            for (const row of rows) {
+                const entityId = String(row[config.mapping.id] || '').trim();
+                const period = currentMonth;
+                if (!entityId) continue;
+                
+                const targets: any = {};
+                Object.keys(KPI_KEYS).forEach(k => {
+                    targets[k] = {
+                        target: Number(row[config.mapping[`${k}_t`]] || 0),
+                        actual: Number(row[config.mapping[`${k}_a`]] || 0)
+                    };
+                });
+                
+                const docId = `${mode}_${period}_${entityId}`;
+                await dbClient.upsert('kpis', docId, { period, entityId, type: mode, targets });
+                count++;
+            }
+            if (count > 0) {
+                syncedModes.push(mode === 'group' ? 'Tập thể' : 'Cá nhân');
+                totalSynced += count;
+            }
+        }
+
+        if (totalSynced > 0) {
+            alert(`Đồng bộ hoàn tất!\n- Dữ liệu: ${syncedModes.join(', ')}\n- Tháng: ${currentMonth}\n- Số bản ghi: ${totalSynced}`);
+            onRefresh();
+        } else {
+            alert("Không có dữ liệu mới để đồng bộ hoặc cấu hình import chưa được thiết lập. Vui lòng kiểm tra trong module KPI.");
+        }
+
+    } catch (e) {
+        console.error("Sync error:", e);
+        alert("Đã xảy ra lỗi trong quá trình đồng bộ dữ liệu. Vui lòng kiểm tra lại URL trong phần cấu hình KPI.");
+    } finally {
+        setIsSyncing(false);
+    }
+  };
 
   // 1. Điểm tin KPI - Lọc theo đơn vị được phép
   const provinceKpi = useMemo(() => {
@@ -94,9 +166,18 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-12">
             <section className="space-y-8">
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em] flex items-center gap-3">
-                <TrendingUp className="text-blue-600" size={24}/> Điểm tin sản lượng & doanh thu
-              </h3>
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em] flex items-center gap-3">
+                  <TrendingUp className="text-blue-600" size={24}/> Điểm tin sản lượng & doanh thu
+                </h3>
+                <button 
+                  onClick={handleSyncKpi} 
+                  disabled={isSyncing} 
+                  className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-slate-200 transition-all disabled:bg-slate-300">
+                  {isSyncing ? <Loader2 className="animate-spin" size={14}/> : <RefreshCw size={14}/>}
+                  Đồng bộ KPI
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden group">
                   <Smartphone className="text-blue-600 mb-6" size={40}/>
@@ -122,7 +203,10 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
                     {['mytv', 'mesh', 'camera', 'revenue'].map(k => (
                       <div key={k} className="flex justify-between items-center border-b border-white/10 pb-2.5">
                         <span className="text-[10px] text-white/80 font-black uppercase truncate pr-4">{KPI_KEYS[k as KPIKey]}</span>
-                        <span className="text-base font-black text-blue-400">{provinceKpi[k]?.percent}%</span>
+                        <div className="flex items-baseline gap-2 text-right">
+                          <span className="font-mono text-sm text-white/80 font-medium">{(provinceKpi[k]?.actual || 0).toLocaleString()}</span>
+                          <span className="text-base font-black text-blue-400">{provinceKpi[k]?.percent}%</span>
+                        </div>
                       </div>
                     ))}
                   </div>
