@@ -7,8 +7,8 @@ import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import { dbClient } from './utils/firebaseClient'; 
-import { Task, Unit, User, Role, TaskStatus, TaskPriority } from './types';
-import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, AlertCircle } from 'lucide-react';
+import { Task, Unit, User, Role } from './types';
+import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
 import md5 from 'md5'; 
 
 const App: React.FC = () => {
@@ -19,6 +19,10 @@ const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeModule, setActiveModule] = useState(() => localStorage.getItem('vnpt_active_module') || 'dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // State cho màn hình cưỡng bức đổi mật khẩu
+  const [forcePassData, setForcePassData] = useState({ new: '', confirm: '' });
+  const [isSubmittingForcePass, setIsSubmittingForcePass] = useState(false);
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -56,7 +60,7 @@ const App: React.FC = () => {
               }
           }
       } catch (error) {
-          console.error("Lỗi tải dữ liệu từ Firebase:", error);
+          console.error("Lỗi tải dữ liệu:", error);
       } finally {
           setIsInitialLoading(false);
           setIsRefreshing(false);
@@ -64,46 +68,12 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('vnpt_user_session');
-    if (storedUser) {
-        try { setCurrentUser(JSON.parse(storedUser)); } catch (e) { localStorage.removeItem('vnpt_user_session'); }
-    }
     fetchInitialData();
   }, [fetchInitialData]);
 
   const handleLogout = () => {
       setCurrentUser(null);
       localStorage.removeItem('vnpt_user_session');
-  };
-
-  const handleInitializeSystem = async () => {
-    if (!confirm("Hệ thống sẽ khởi tạo dữ liệu gốc lên Firebase Cloud. Tiếp tục?")) return;
-    setIsInitialLoading(true);
-    try {
-        const rootId = 'unit_root_qn';
-        const adminId = 'user_admin_root';
-
-        await dbClient.upsert('units', rootId, { 
-            code: 'VNPT_QN', name: 'VNPT Quảng Ninh (Gốc)', level: 0, parentId: null 
-        });
-
-        await dbClient.upsert('users', adminId, {
-            hrmCode: 'ADMIN', fullName: 'Quản Trị Viên', email: 'admin@vnpt.vn',
-            username: 'admin', password: md5('123'), title: Role.DIRECTOR,
-            unitId: rootId, isFirstLogin: false, canManageUsers: true
-        });
-
-        await fetchInitialData();
-        alert("Khởi tạo Firebase Cloud Database thành công!\nĐăng nhập bằng: admin / 123");
-    } catch (err: any) {
-        if (err.message.includes('permission')) {
-            alert("LỖI PHÂN QUYỀN FIREBASE:\n\nVui lòng vào Firebase Console -> Firestore -> Rules và đổi thành 'allow read, write: if true;'.\n\nChi tiết lỗi: " + err.message);
-        } else {
-            alert("Lỗi khởi tạo: " + err.message);
-        }
-    } finally {
-        setIsInitialLoading(false);
-    }
   };
 
   const handleLogin = (e: React.FormEvent) => {
@@ -118,10 +88,82 @@ const App: React.FC = () => {
       }
   };
 
+  const handleForceChangePassword = async (e: React.FormEvent) => {
+      e.preventDefault();
+      const regex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
+      
+      if (!regex.test(forcePassData.new)) {
+          return alert("Mật khẩu không đạt yêu cầu: Tối thiểu 8 ký tự, bao gồm chữ cái, chữ số và 1 ký tự đặc biệt.");
+      }
+      if (forcePassData.new !== forcePassData.confirm) {
+          return alert("Mật khẩu xác nhận không khớp.");
+      }
+
+      setIsSubmittingForcePass(true);
+      try {
+          if (!currentUser) return;
+          const updatedUser = { 
+              ...currentUser, 
+              password: md5(forcePassData.new), 
+              isFirstLogin: false 
+          };
+          await dbClient.update('users', currentUser.id, { 
+              password: updatedUser.password, 
+              isFirstLogin: false 
+          });
+          setCurrentUser(updatedUser);
+          localStorage.setItem('vnpt_user_session', JSON.stringify(updatedUser));
+          alert("Chúc mừng! Bạn đã kích hoạt tài khoản thành công.");
+      } catch (err) {
+          alert("Có lỗi xảy ra khi đổi mật khẩu.");
+      } finally {
+          setIsSubmittingForcePass(false);
+      }
+  };
+
+  // MÀN HÌNH CƯỠNG BỨC ĐỔI MẬT KHẨU
+  if (currentUser && currentUser.isFirstLogin) {
+      return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 bg-[url('https://www.toptal.com/designers/subtlepatterns/uploads/dot-grid.png')]">
+              <div className="bg-white p-12 rounded-[48px] shadow-2xl w-full max-w-lg border-b-8 border-blue-600 animate-zoom-in">
+                  <div className="text-center mb-8">
+                    <div className="w-20 h-20 bg-blue-100 rounded-3xl mx-auto mb-6 flex items-center justify-center text-blue-600">
+                        <Key size={40} />
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-800 tracking-tighter uppercase">Kích hoạt tài khoản</h2>
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-2">Vui lòng đổi mật khẩu mặc định để tiếp tục</p>
+                  </div>
+
+                  <form onSubmit={handleForceChangePassword} className="space-y-6">
+                      <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-1">
+                          <p className="text-[10px] font-black text-blue-800 uppercase flex items-center gap-2"><ShieldCheck size={14}/> Quy định bảo mật VNPT QN:</p>
+                          <p className="text-[9px] font-bold text-blue-600 leading-tight">Mật khẩu mới phải dài ít nhất 8 ký tự, bao gồm cả chữ cái, chữ số và ít nhất một ký tự đặc biệt (!@#$%^&*).</p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu mới</label>
+                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.new} onChange={e => setForcePassData({...forcePassData, new: e.target.value})} />
+                      </div>
+                      <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Xác nhận mật khẩu</label>
+                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.confirm} onChange={e => setForcePassData({...forcePassData, confirm: e.target.value})} />
+                      </div>
+                      
+                      <div className="flex gap-4">
+                          <button type="button" onClick={handleLogout} className="flex-1 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest text-slate-400">Đăng xuất</button>
+                          <button type="submit" disabled={isSubmittingForcePass} className="flex-[2] bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-blue-100 flex items-center justify-center gap-2">
+                              {isSubmittingForcePass ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu & Truy cập
+                          </button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      );
+  }
+
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     switch (activeModule) {
-      // Fix: Pass users prop to Dashboard
       case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
@@ -142,36 +184,21 @@ const App: React.FC = () => {
                         <Database className="text-white" size={40} />
                     </div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.8 (Firebase)</p>
+                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.9 (Firebase)</p>
                   </div>
-                  {(users.length === 0 && !isInitialLoading) ? (
-                      <div className="space-y-6 animate-fade-in">
-                          <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 flex gap-3">
-                             <ShieldAlert className="text-amber-500 shrink-0" size={20}/>
-                             <div>
-                                <p className="text-[10px] text-amber-800 font-black uppercase tracking-wider">Lỗi kết nối hoặc DB trống</p>
-                                <p className="text-[10px] text-amber-700 font-medium leading-tight mt-0.5">Nếu nút khởi tạo bên dưới báo lỗi "Permissions", hãy kiểm tra Firestore Rules.</p>
-                             </div>
-                          </div>
-                          <button onClick={handleInitializeSystem} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all">
-                             <Database size={20}/> Khởi tạo Firebase Cloud
-                          </button>
+                  <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
+                      <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
+                          <input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
                       </div>
-                   ) : (
-                      <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
-                          <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
-                              <input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
-                          </div>
-                          <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label>
-                              <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-                          </div>
-                          <button type="submit" disabled={isInitialLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center">
-                             {isInitialLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
-                          </button>
-                      </form>
-                   )}
+                      <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label>
+                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
+                      </div>
+                      <button type="submit" disabled={isInitialLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center">
+                          {isInitialLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
+                      </button>
+                  </form>
               </div>
           </div>
       );
@@ -186,7 +213,7 @@ const App: React.FC = () => {
                {isRefreshing && <RefreshCw className="animate-spin text-blue-500" size={20}/>}
                <div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200">
                  <Search size={18} className="text-slate-400 mr-2" />
-                 <input type="text" placeholder="Tìm nhanh công việc, nhân sự..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" />
+                 <input type="text" placeholder="Tìm nhanh..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" />
                </div>
            </div>
            <div className="flex items-center gap-6">
