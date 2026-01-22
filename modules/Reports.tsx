@@ -1,22 +1,94 @@
 
 import React, { useState, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { Task, TaskStatus, Unit, User, Role } from '../types';
-import { BarChartBig, Users, Building, AlertCircle, CheckCircle2, Clock, ListTodo } from 'lucide-react';
+import { Task, TaskStatus, Unit, User, Role, KPI_KEYS } from '../types';
+import { BarChartBig, Users, Building, RefreshCw, Loader2 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { dbClient } from '../utils/firebaseClient';
 
 interface ReportsProps {
   tasks: Task[];
   units: Unit[];
   users: User[];
   currentUser: User;
+  onRefresh: () => void;
 }
 
-const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser }) => {
+const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, onRefresh }) => {
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [viewMode, setViewMode] = useState<'unit' | 'user'>('unit');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
   const myAccessibleUnits = currentUser.accessibleUnitIds || [currentUser.unitId];
+
+  const handleSyncData = async () => {
+    setIsSyncing(true);
+    try {
+        const modes: ('personal' | 'group')[] = ['personal', 'group'];
+        let totalSynced = 0;
+        let syncedModes = [];
+
+        for (const mode of modes) {
+            const configStr = localStorage.getItem(`ds_config_v4_${mode}`);
+            if (!configStr) continue;
+
+            const config = JSON.parse(configStr);
+            if (!config.url || !config.mapping?.id) continue;
+
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) {
+                finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            }
+            
+            const res = await fetch(finalUrl);
+            if (!res.ok) {
+                console.warn(`Could not fetch KPI data for ${mode} from ${finalUrl}`);
+                continue;
+            }
+            
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+            let count = 0;
+            for (const row of rows) {
+                const entityId = String(row[config.mapping.id] || '').trim();
+                const period = selectedMonth;
+                if (!entityId) continue;
+                
+                const targets: any = {};
+                Object.keys(KPI_KEYS).forEach(k => {
+                    targets[k] = {
+                        target: Number(row[config.mapping[`${k}_t`]] || 0),
+                        actual: Number(row[config.mapping[`${k}_a`]] || 0)
+                    };
+                });
+                
+                const docId = `${mode}_${period}_${entityId}`;
+                await dbClient.upsert('kpis', docId, { period, entityId, type: mode, targets });
+                count++;
+            }
+            if (count > 0) {
+                syncedModes.push(mode === 'group' ? 'Tập thể' : 'Cá nhân');
+                totalSynced += count;
+            }
+        }
+
+        if (totalSynced > 0) {
+            alert(`Đồng bộ hoàn tất!\n- Dữ liệu: ${syncedModes.join(', ')}\n- Tháng: ${selectedMonth}\n- Số bản ghi: ${totalSynced}`);
+            onRefresh();
+        } else {
+            alert("Không có dữ liệu mới để đồng bộ hoặc cấu hình import chưa được thiết lập. Vui lòng kiểm tra trong module KPI.");
+        }
+
+    } catch (e) {
+        console.error("Sync error:", e);
+        alert("Đã xảy ra lỗi trong quá trình đồng bộ dữ liệu. Vui lòng kiểm tra lại URL trong phần cấu hình KPI.");
+    } finally {
+        setIsSyncing(false);
+    }
+  };
 
   const reportData = useMemo(() => {
     // 1. Lọc công việc theo tháng và quyền hạn
@@ -91,6 +163,14 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser }) =
             <div className="flex items-center gap-4">
                 <label className="text-xs font-black text-slate-400 uppercase">Chọn tháng:</label>
                 <input type="month" className="border-2 rounded-2xl px-5 py-2.5 font-black text-sm bg-slate-50 outline-none" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+                <button 
+                  onClick={handleSyncData} 
+                  disabled={isSyncing} 
+                  className="bg-blue-600 text-white px-5 py-2.5 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all disabled:bg-slate-400"
+                >
+                  {isSyncing ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                  Đồng bộ dữ liệu
+                </button>
             </div>
             <div className="flex bg-slate-100 p-1.5 rounded-2xl border">
                 <button onClick={() => setViewMode('unit')} className={`px-6 py-2 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${viewMode === 'unit' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Building size={16}/> Theo Đơn vị</button>
