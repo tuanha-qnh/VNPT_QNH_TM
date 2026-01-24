@@ -17,6 +17,7 @@ export interface Unit {
   managerIds?: string[];
   address?: string;
   phone?: string;
+  includeInMobileReport?: boolean;
 }
 
 export interface User {
@@ -106,6 +107,7 @@ export interface KPIDefinition {
   type: 'group' | 'personal' | 'both';
   unit: string; // e.g., "TB", "VNĐ"
   order?: number;
+  dataSource?: string; // Key để phân loại KPI cho module MobileOps
 }
 
 export interface KPIRecord {

@@ -7,7 +7,8 @@ import Tasks from './modules/Tasks';
 import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import PersonalTasks from './modules/PersonalTasks';
-import Reports from './modules/Reports'; // Import module mới
+import Reports from './modules/Reports';
+import MobileOps from './modules/MobileOps'; // Import module mới
 import { dbClient } from './utils/firebaseClient'; 
 import { Task, Unit, User, Role, KPIDefinition } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
@@ -31,6 +32,7 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [kpis, setKpis] = useState<any[]>([]);
   const [kpiDefinitions, setKpiDefinitions] = useState<KPIDefinition[]>([]);
+  const [mobileData, setMobileData] = useState<any[]>([]); // State cho dữ liệu module mobile
 
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
@@ -41,12 +43,13 @@ const App: React.FC = () => {
       else setIsRefreshing(true);
       
       try {
-          const [unitsData, usersData, tasksData, kpisData, kpiDefsDataResult] = await Promise.all([
+          const [unitsData, usersData, tasksData, kpisData, kpiDefsDataResult, mobileDataResult] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
               dbClient.getAll('kpis'),
-              dbClient.getAll('kpi_definitions')
+              dbClient.getAll('kpi_definitions'),
+              dbClient.getAll('mobile_imported_data') // Fetch dữ liệu cho module mobile
           ]);
 
           let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
@@ -71,6 +74,7 @@ const App: React.FC = () => {
           setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
           setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
+          setMobileData(mobileDataResult || []);
 
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
@@ -190,6 +194,7 @@ const App: React.FC = () => {
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
+      case 'mobile-ops': return <MobileOps kpis={kpis} mobileData={mobileData} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
