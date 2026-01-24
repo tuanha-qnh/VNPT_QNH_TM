@@ -10,7 +10,7 @@ import PersonalTasks from './modules/PersonalTasks';
 import Reports from './modules/Reports';
 import MobileOps from './modules/MobileOps';
 import { dbClient } from './utils/firebaseClient'; 
-import { Task, Unit, User, Role, KPIDefinition, DataSource, LibraryKpi, ActionProgram } from './types';
+import { Task, Unit, User, Role, KPIDefinition } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
 import md5 from 'md5'; 
 
@@ -33,12 +33,6 @@ const App: React.FC = () => {
   const [kpis, setKpis] = useState<any[]>([]);
   const [kpiDefinitions, setKpiDefinitions] = useState<KPIDefinition[]>([]);
   
-  // States cho module MobileOps mới
-  const [dataSources, setDataSources] = useState<DataSource[]>([]);
-  const [libraryKpis, setLibraryKpis] = useState<LibraryKpi[]>([]);
-  const [actionPrograms, setActionPrograms] = useState<ActionProgram[]>([]);
-  const [importedMobileData, setImportedMobileData] = useState<any[]>([]);
-
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
   }, [activeModule]);
@@ -49,18 +43,13 @@ const App: React.FC = () => {
       
       try {
           const [
-              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult,
-              dataSourcesData, libraryKpisData, actionProgramsData, importedMobileDataResult
+              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult
           ] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
               dbClient.getAll('kpis'),
-              dbClient.getAll('kpi_definitions'),
-              dbClient.getAll('mobile_data_sources'),
-              dbClient.getAll('mobile_library_kpis'),
-              dbClient.getAll('mobile_action_programs'),
-              dbClient.getAll('mobile_imported_data')
+              dbClient.getAll('kpi_definitions')
           ]);
 
           let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
@@ -84,11 +73,6 @@ const App: React.FC = () => {
           setKpis(kpisData || []);
           setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
           
-          setDataSources(dataSourcesData as DataSource[]);
-          setLibraryKpis(libraryKpisData as LibraryKpi[]);
-          setActionPrograms(actionProgramsData as ActionProgram[]);
-          setImportedMobileData(importedMobileDataResult || []);
-
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
               const parsed = JSON.parse(stored);
@@ -180,7 +164,7 @@ const App: React.FC = () => {
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
-      case 'mobile-ops': return <MobileOps currentUser={currentUser!} users={users} units={units} dataSources={dataSources} libraryKpis={libraryKpis} actionPrograms={actionPrograms} importedData={importedMobileData} onRefresh={() => fetchInitialData(true)} />;
+      case 'mobile-ops': return <MobileOps currentUser={currentUser!} users={users} units={units} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
