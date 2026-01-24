@@ -4,7 +4,7 @@ import { User, Unit } from '../types';
 import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw, GripHorizontal } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
-import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList } from 'recharts';
+import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid } from 'recharts';
 
 interface MobileOpsConfig {
   id: string; 
@@ -167,7 +167,7 @@ const MobileKpiView: React.FC<{
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
           const data = payload[0].payload;
-          const currentBarColor = payload[0].fill;
+          const currentBarColor = payload.find(p => p.dataKey === 'actual')?.fill || barColor;
           return (
             <div className="bg-white/90 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-slate-200">
               <p className="font-black text-sm text-slate-800 mb-2 border-b pb-2">{label}</p>
@@ -188,42 +188,21 @@ const MobileKpiView: React.FC<{
         return null;
     };
 
-    const CustomBarLabel: React.FC<any> = ({ x, y, width, height, value, payload }) => {
-        if (!payload || value === 0) return null;
-
+    const VerticalActualLabel: React.FC<any> = ({ x, y, width, height, value }) => {
+        if (height < 50 || !value || value === 0) return null;
         const formattedValue = value.toLocaleString();
-        const percentValue = `${payload.percent}%`;
-        const isTallEnoughForVertical = height > 50;
-
         return (
-            <g>
-                {/* Tỷ lệ (đen) ở trên */}
-                <text 
-                    x={x + width / 2} 
-                    y={y - 6} 
-                    fill="#1e293b"
-                    textAnchor="middle" 
-                    className="text-[10px] font-black"
-                >
-                    {percentValue}
-                </text>
-
-                {/* Kết quả (trắng), dọc, bên trong cột */}
-                {isTallEnoughForVertical && (
-                    <text
-                        fill="white"
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        transform={`translate(${x + width / 2}, ${y + height / 2}) rotate(-90)`}
-                        className="text-xs font-bold pointer-events-none tracking-wider"
-                    >
-                        {formattedValue}
-                    </text>
-                )}
-            </g>
+            <text
+                fill="white"
+                textAnchor="middle"
+                dominantBaseline="central"
+                transform={`translate(${x + width / 2}, ${y + height / 2}) rotate(-90)`}
+                className="text-xs font-bold pointer-events-none tracking-wider"
+            >
+                {formattedValue}
+            </text>
         );
     };
-
 
     return (
         <div className="bg-white p-6 rounded-[32px] shadow-sm border space-y-4 h-full flex flex-col relative">
@@ -252,11 +231,22 @@ const MobileKpiView: React.FC<{
                 <div className="flex-1" style={{ height: `${chartHeight}px` }}>
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 40, right: 10, left: -20, bottom: 90 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                             <XAxis dataKey="name" angle={-45} textAnchor="end" interval={0} tick={{ fontSize: 11, fontWeight: 'bold' }} />
                             <YAxis tick={{ fontSize: 9 }}/>
                             <Tooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0, 104, 255, 0.05)'}} />
-                            <Bar dataKey="actual" fill={barColor} name="Thực hiện" barSize={40}>
-                                <LabelList dataKey="actual" content={<CustomBarLabel />} />
+                            
+                            <Bar dataKey="target" fill={`${barColor}4D`} name="Kế hoạch" barSize={40}>
+                                <LabelList 
+                                    dataKey="percent" 
+                                    position="top" 
+                                    offset={5}
+                                    formatter={(value: number) => `${value}%`} 
+                                    style={{ fill: '#1e293b', fontSize: '10px', fontWeight: 'bold' }} 
+                                />
+                            </Bar>
+                            <Bar dataKey="actual" fill={barColor} name="Thực hiện" barSize={25}>
+                                <LabelList dataKey="actual" content={<VerticalActualLabel />} />
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
