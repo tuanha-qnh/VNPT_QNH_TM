@@ -8,9 +8,9 @@ import KPI from './modules/KPI';
 import Settings from './modules/Settings';
 import PersonalTasks from './modules/PersonalTasks';
 import Reports from './modules/Reports';
-import MobileOps from './modules/MobileOps'; // Import module mới
+import MobileOps from './modules/MobileOps';
 import { dbClient } from './utils/firebaseClient'; 
-import { Task, Unit, User, Role, KPIDefinition } from './types';
+import { Task, Unit, User, Role, KPIDefinition, DataSource, LibraryKpi, ActionProgram } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
 import md5 from 'md5'; 
 
@@ -32,7 +32,12 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [kpis, setKpis] = useState<any[]>([]);
   const [kpiDefinitions, setKpiDefinitions] = useState<KPIDefinition[]>([]);
-  const [mobileData, setMobileData] = useState<any[]>([]); // State cho dữ liệu module mobile
+  
+  // States cho module MobileOps mới
+  const [dataSources, setDataSources] = useState<DataSource[]>([]);
+  const [libraryKpis, setLibraryKpis] = useState<LibraryKpi[]>([]);
+  const [actionPrograms, setActionPrograms] = useState<ActionProgram[]>([]);
+  const [importedMobileData, setImportedMobileData] = useState<any[]>([]);
 
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
@@ -43,13 +48,19 @@ const App: React.FC = () => {
       else setIsRefreshing(true);
       
       try {
-          const [unitsData, usersData, tasksData, kpisData, kpiDefsDataResult, mobileDataResult] = await Promise.all([
+          const [
+              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult,
+              dataSourcesData, libraryKpisData, actionProgramsData, importedMobileDataResult
+          ] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
               dbClient.getAll('kpis'),
               dbClient.getAll('kpi_definitions'),
-              dbClient.getAll('mobile_imported_data') // Fetch dữ liệu cho module mobile
+              dbClient.getAll('mobile_data_sources'),
+              dbClient.getAll('mobile_library_kpis'),
+              dbClient.getAll('mobile_action_programs'),
+              dbClient.getAll('mobile_imported_data')
           ]);
 
           let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
@@ -63,18 +74,20 @@ const App: React.FC = () => {
                 { id: 'mobile_rev', name: "Doanh thu Di động", type: 'group', unit: 'VNĐ', order: 6 },
                 { id: 'revenue', name: "Doanh thu VT-CNTT", type: 'group', unit: 'VNĐ', order: 7 }
               ];
-              for (const kpi of defaultKpis) {
-                  await dbClient.upsert('kpi_definitions', kpi.id, kpi);
-              }
+              for (const kpi of defaultKpis) await dbClient.upsert('kpi_definitions', kpi.id, kpi);
               kpiDefsData = defaultKpis;
           }
-
+          
           setUnits(unitsData as Unit[]);
           setUsers(usersData as User[]);
           setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
           setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
-          setMobileData(mobileDataResult || []);
+          
+          setDataSources(dataSourcesData as DataSource[]);
+          setLibraryKpis(libraryKpisData as LibraryKpi[]);
+          setActionPrograms(actionProgramsData as ActionProgram[]);
+          setImportedMobileData(importedMobileDataResult || []);
 
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
@@ -128,15 +141,8 @@ const App: React.FC = () => {
       setIsSubmittingForcePass(true);
       try {
           if (!currentUser) return;
-          const updatedUser = { 
-              ...currentUser, 
-              password: md5(forcePassData.new), 
-              isFirstLogin: false 
-          };
-          await dbClient.update('users', currentUser.id, { 
-              password: updatedUser.password, 
-              isFirstLogin: false 
-          });
+          const updatedUser = { ...currentUser, password: md5(forcePassData.new), isFirstLogin: false };
+          await dbClient.update('users', currentUser.id, { password: updatedUser.password, isFirstLogin: false });
           setCurrentUser(updatedUser);
           localStorage.setItem('vnpt_user_session', JSON.stringify(updatedUser));
           alert("Chúc mừng! Bạn đã kích hoạt tài khoản thành công.");
@@ -147,40 +153,20 @@ const App: React.FC = () => {
       }
   };
 
-  // MÀN HÌNH CƯỠNG BỨC ĐỔI MẬT KHẨU
   if (currentUser && currentUser.isFirstLogin) {
       return (
           <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 bg-[url('https://www.toptal.com/designers/subtlepatterns/uploads/dot-grid.png')]">
               <div className="bg-white p-12 rounded-[48px] shadow-2xl w-full max-w-lg border-b-8 border-blue-600 animate-zoom-in">
                   <div className="text-center mb-8">
-                    <div className="w-20 h-20 bg-blue-100 rounded-3xl mx-auto mb-6 flex items-center justify-center text-blue-600">
-                        <Key size={40} />
-                    </div>
+                    <div className="w-20 h-20 bg-blue-100 rounded-3xl mx-auto mb-6 flex items-center justify-center text-blue-600"><Key size={40} /></div>
                     <h2 className="text-2xl font-black text-slate-800 tracking-tighter uppercase">Kích hoạt tài khoản</h2>
                     <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-2">Vui lòng đổi mật khẩu mặc định để tiếp tục</p>
                   </div>
-
                   <form onSubmit={handleForceChangePassword} className="space-y-6">
-                      <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-1">
-                          <p className="text-[10px] font-black text-blue-800 uppercase flex items-center gap-2"><ShieldCheck size={14}/> Quy định bảo mật VNPT QN:</p>
-                          <p className="text-[9px] font-bold text-blue-600 leading-tight">Mật khẩu mới phải dài ít nhất 8 ký tự, bao gồm cả chữ cái, chữ số và ít nhất một ký tự đặc biệt (!@#$%^&*).</p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu mới</label>
-                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.new} onChange={e => setForcePassData({...forcePassData, new: e.target.value})} />
-                      </div>
-                      <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Xác nhận mật khẩu</label>
-                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.confirm} onChange={e => setForcePassData({...forcePassData, confirm: e.target.value})} />
-                      </div>
-                      
-                      <div className="flex gap-4">
-                          <button type="button" onClick={handleLogout} className="flex-1 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest text-slate-400">Đăng xuất</button>
-                          <button type="submit" disabled={isSubmittingForcePass} className="flex-[2] bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-blue-100 flex items-center justify-center gap-2">
-                              {isSubmittingForcePass ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu & Truy cập
-                          </button>
-                      </div>
+                      <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-1"><p className="text-[10px] font-black text-blue-800 uppercase flex items-center gap-2"><ShieldCheck size={14}/> Quy định bảo mật VNPT QN:</p><p className="text-[9px] font-bold text-blue-600 leading-tight">Mật khẩu mới phải dài ít nhất 8 ký tự, bao gồm cả chữ cái, chữ số và ít nhất một ký tự đặc biệt (!@#$%^&*).</p></div>
+                      <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu mới</label><input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.new} onChange={e => setForcePassData({...forcePassData, new: e.target.value})} /></div>
+                      <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Xác nhận mật khẩu</label><input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={forcePassData.confirm} onChange={e => setForcePassData({...forcePassData, confirm: e.target.value})} /></div>
+                      <div className="flex gap-4"><button type="button" onClick={handleLogout} className="flex-1 py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest text-slate-400">Đăng xuất</button><button type="submit" disabled={isSubmittingForcePass} className="flex-[2] bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-blue-100 flex items-center justify-center gap-2">{isSubmittingForcePass ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu & Truy cập</button></div>
                   </form>
               </div>
           </div>
@@ -194,7 +180,7 @@ const App: React.FC = () => {
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
-      case 'mobile-ops': return <MobileOps kpis={kpis} mobileData={mobileData} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
+      case 'mobile-ops': return <MobileOps currentUser={currentUser!} users={users} units={units} dataSources={dataSources} libraryKpis={libraryKpis} actionPrograms={actionPrograms} importedData={importedMobileData} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
@@ -209,24 +195,14 @@ const App: React.FC = () => {
               <div className="bg-white p-12 rounded-[40px] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)] w-full max-w-md border border-white relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
                   <div className="text-center mb-10">
-                    <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl shadow-blue-200">
-                        <Database className="text-white" size={40} />
-                    </div>
+                    <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl shadow-blue-200"><Database className="text-white" size={40} /></div>
                     <h1 className="text-3xl font-black text-slate-800 tracking-tighter">VNPT QUẢNG NINH</h1>
                     <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mt-1">Management System v1.9.5 (Firebase)</p>
                   </div>
                   <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
-                      <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label>
-                          <input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} />
-                      </div>
-                      <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label>
-                          <input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-                      </div>
-                      <button type="submit" disabled={isInitialLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center">
-                          {isInitialLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}
-                      </button>
+                      <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đăng nhập</label><input type="text" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} /></div>
+                      <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mật khẩu</label><input type="password" required className="w-full border-2 border-slate-100 rounded-2xl p-4 focus:border-blue-500 outline-none transition-all font-bold text-slate-700 bg-slate-50" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} /></div>
+                      <button type="submit" disabled={isInitialLoading} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center">{isInitialLoading ? <Loader2 className="animate-spin" /> : 'Vào hệ thống'}</button>
                   </form>
               </div>
           </div>
@@ -238,23 +214,8 @@ const App: React.FC = () => {
       <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} currentUser={currentUser} />
       <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-16'} flex flex-col`}>
         <header className="h-20 bg-white/80 backdrop-blur-md sticky top-0 border-b px-8 flex items-center justify-between z-40">
-           <div className="flex items-center gap-4">
-               {isRefreshing && <RefreshCw className="animate-spin text-blue-500" size={20}/>}
-               <div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200">
-                 <Search size={18} className="text-slate-400 mr-2" />
-                 <input type="text" placeholder="Tìm nhanh..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" />
-               </div>
-           </div>
-           <div className="flex items-center gap-6">
-             <div className="text-right hidden sm:block">
-                 <div className="text-sm font-black text-slate-800 leading-none uppercase tracking-tighter">{currentUser.fullName}</div>
-                 <div className="text-[10px] text-blue-600 font-black uppercase tracking-widest mt-1">{currentUser.title}</div>
-             </div>
-             <div className="h-12 w-12 bg-gradient-to-tr from-blue-700 to-blue-500 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-blue-100 text-xl border-2 border-white overflow-hidden">
-                {currentUser.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" /> : currentUser.fullName.charAt(0)}
-             </div>
-             <button onClick={handleLogout} className="text-slate-300 hover:text-red-600 transition-all p-2 hover:bg-red-50 rounded-xl"><LogOut size={24} /></button>
-           </div>
+           <div className="flex items-center gap-4"><div className="flex items-center bg-slate-100 rounded-2xl px-5 py-2.5 w-full max-w-md border border-slate-200"><Search size={18} className="text-slate-400 mr-2" /><input type="text" placeholder="Tìm nhanh..." className="bg-transparent border-none outline-none text-sm w-full font-bold text-slate-600" /></div></div>
+           <div className="flex items-center gap-6"><div className="text-right hidden sm:block"><div className="text-sm font-black text-slate-800 leading-none uppercase tracking-tighter">{currentUser.fullName}</div><div className="text-[10px] text-blue-600 font-black uppercase tracking-widest mt-1">{currentUser.title}</div></div><div className="h-12 w-12 bg-gradient-to-tr from-blue-700 to-blue-500 rounded-2xl flex items-center justify-center text-white font-black shadow-xl shadow-blue-100 text-xl border-2 border-white overflow-hidden">{currentUser.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" /> : currentUser.fullName.charAt(0)}</div><button onClick={handleLogout} className="text-slate-300 hover:text-red-600 transition-all p-2 hover:bg-red-50 rounded-xl"><LogOut size={24} /></button></div>
         </header>
         <main className="p-10 flex-1 overflow-x-hidden">{renderModule()}</main>
       </div>

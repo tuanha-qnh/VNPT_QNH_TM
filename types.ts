@@ -107,7 +107,6 @@ export interface KPIDefinition {
   type: 'group' | 'personal' | 'both';
   unit: string; // e.g., "TB", "VNĐ"
   order?: number;
-  dataSource?: string; // Key để phân loại KPI cho module MobileOps
 }
 
 export interface KPIRecord {
@@ -121,4 +120,41 @@ export interface KPIRecord {
       actual: number;
     }
   };
+}
+
+// ======================================================
+// == DÀNH CHO MODULE QUẢN TRỊ CTHĐ DI ĐỘNG (REFACTORED) ==
+// ======================================================
+export interface DataSource {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface LibraryKpi {
+  id: string;
+  code: string;
+  name: string;
+  unit: string;
+  audience: 'group' | 'personal' | 'both';
+  dataSourceId: string;
+  mapping?: {
+    entityIdCol: string; // Cột định danh (Mã đơn vị / Mã HRM)
+    targetCol: string;   // Cột Kế hoạch
+    actualCol: string;   // Cột Thực hiện
+  };
+}
+
+export interface ActionProgram {
+  id: string;
+  code: string;
+  name: string;
+  participatingUnitIds: string[];
+  evaluationType: 'group' | 'personal' | 'both';
+  kpiIds: string[]; // Danh sách các ID của LibraryKpi được kéo thả vào
+  displayConfig: {
+    type: 'graph' | 'table';
+    graphType?: 'bar' | 'pie' | 'line';
+    tableType?: 'normal' | 'with_bars' | 'heatmap';
+  }
 }

@@ -1,210 +1,652 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { User, Unit, KPIRecord, KPIDefinition } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Smartphone, Settings, Loader2, Table, Filter, Import, Save, Database, Plus, X, Edit3, Trash2, Target, Users, UserCheck, RefreshCw } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { User, Unit, DataSource, LibraryKpi, ActionProgram } from '../types';
+import { Smartphone, BookCopy, BarChart2, FileText, Settings, Loader2, Plus, Edit2, Trash2, Save, X, Database, Link, SlidersHorizontal, Package, Wand2, RefreshCw, Download, Filter } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
+import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar } from 'recharts';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
+// Main Props Interface
 interface MobileOpsProps {
-  kpis: KPIRecord[]; mobileData: any[]; units: Unit[]; users: User[]; currentUser: User; kpiDefinitions: KPIDefinition[]; onRefresh: () => void;
+  currentUser: User;
+  users: User[];
+  units: Unit[];
+  dataSources: DataSource[];
+  libraryKpis: LibraryKpi[];
+  actionPrograms: ActionProgram[];
+  importedData: any[];
+  onRefresh: () => void;
 }
 
-const DATA_CONFIG_STRUCTURE = {
-  'Di động hiện hữu': [
-    { key: 'autocall_group', title: 'AutoCall (Tập thể)' },
-    { key: 'autocall_personal', title: 'AutoCall (Cá nhân)' }
-  ],
-  'Kênh nội bộ': [
-    { key: 'internal_group', title: 'Kênh nội bộ (Tập thể)' },
-    { key: 'internal_personal', title: 'Kênh nội bộ (Cá nhân)' }
-  ],
-  'Kênh ngoài': [
-    { key: 'external_group', title: 'Kênh ngoài (Tập thể)' },
-    { key: 'external_personal', title: 'Kênh ngoài (Cá nhân)' }
-  ]
-};
-
-const MobileOps: React.FC<MobileOpsProps> = (props) => {
-  const [activeTab, setActiveTab] = useState<'ptm' | 'existing' | 'internal' | 'external' | 'config'>('ptm');
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [mobileKpiDefs, setMobileKpiDefs] = useState<KPIDefinition[]>([]);
-  const [autocallTargets, setAutocallTargets] = useState({ ckn: 0, ckd: 0, package: 0 });
-  const [isSyncing, setIsSyncing] = useState(false);
+// ==================================
+// == MAIN DASHBOARD COMPONENT
+// ==================================
+const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
+  const [activeModule, setActiveModule] = useState<'programs' | 'library' | 'reports'>('programs');
   const isAdmin = props.currentUser.username === 'admin';
 
-  const fetchData = async () => {
-    const [defs, targets] = await Promise.all([dbClient.getAll('mobile_kpi_definitions'), dbClient.getById('mobile_targets', selectedMonth)]);
-    setMobileKpiDefs(defs as KPIDefinition[]);
-    setAutocallTargets(targets?.autocall || { ckn: 0, ckd: 0, package: 0 });
-  };
-  useEffect(() => { fetchData(); }, [selectedMonth]);
-
-  const handleSyncMobileData = async () => {
-    const month = prompt("Nhập tháng cần đồng bộ (YYYY-MM):", selectedMonth);
-    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-        if (month) alert("Định dạng tháng không hợp lệ!");
-        return;
-    }
-    setIsSyncing(true);
-    try {
-        const allDataKeys = Object.values(DATA_CONFIG_STRUCTURE).flat().map(c => c.key);
-        let totalSynced = 0;
-        for (const key of allDataKeys) {
-            const config = await dbClient.getById('mobile_data_configs', `${key}_${month}`);
-            if (!config?.url) continue;
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl); if (!res.ok) continue;
-            const csv = await res.text();
-            const wb = XLSX.read(csv, { type: 'string' });
-            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            if (rows.length > 0) {
-                await dbClient.upsert('mobile_imported_data', `${key}_${month}`, { period: month, dataType: key, data: rows, mapping: config.mapping });
-                totalSynced += rows.length;
-            }
-        }
-        alert(`Đồng bộ hoàn tất! Tổng cộng ${totalSynced} dòng dữ liệu cho tháng ${month}.`);
-        props.onRefresh();
-    } catch (e) { alert("Có lỗi xảy ra trong quá trình đồng bộ."); console.error(e); }
-    finally { setIsSyncing(false); }
-  };
-  
-  const renderTabContent = () => {
-    switch(activeTab) {
-      case 'ptm': return <PtmTab {...props} selectedMonth={selectedMonth} />;
-      case 'existing': return <ExistingMobileTab {...props} mobileKpiDefs={mobileKpiDefs} autocallTargets={autocallTargets} selectedMonth={selectedMonth} />;
-      case 'internal': return <InternalChannelTab {...props} mobileKpiDefs={mobileKpiDefs} selectedMonth={selectedMonth} />;
-      case 'external': return <ExternalChannelTab {...props} mobileKpiDefs={mobileKpiDefs} selectedMonth={selectedMonth} />;
-      case 'config': return isAdmin ? <ConfigTab {...props} mobileKpiDefs={mobileKpiDefs} onRefreshData={fetchData} selectedMonth={selectedMonth} /> : null;
-      default: return null;
+  const renderModule = () => {
+    switch (activeModule) {
+      case 'programs':
+        return <ActionProgramsView {...props} />;
+      case 'library':
+        return isAdmin ? <KpiLibraryAdmin {...props} /> : <AccessDenied />;
+      case 'reports':
+        return <ReportsView {...props} />;
+      default:
+        return <ActionProgramsView {...props} />;
     }
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-10">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b pb-6">
-        <div><h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3"><Smartphone className="text-blue-600" size={36}/> QUẢN TRỊ CTHĐ DI ĐỘNG</h2><p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Phân tích & Đánh giá hiệu quả các chương trình</p></div>
-        <div className="flex items-center gap-4">
-            <input type="month" className="border-2 rounded-2xl px-5 py-2.5 font-black text-sm bg-white outline-none focus:border-blue-500" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
-            <button onClick={handleSyncMobileData} disabled={isSyncing} className="bg-blue-50 text-blue-700 p-3 rounded-2xl hover:bg-blue-100 transition-all disabled:opacity-50"><RefreshCw size={20} className={isSyncing ? 'animate-spin' : ''}/></button>
+    <div className="space-y-8 animate-fade-in">
+      <div className="flex justify-between items-center border-b pb-6">
+        <div>
+          <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
+            <Smartphone className="text-blue-600" size={36} /> QUẢN TRỊ CTHĐ DI ĐỘNG
+          </h2>
+        </div>
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl border">
+          <ModuleTabButton id="programs" label="Chương trình hành động" icon={<BarChart2 size={16}/>} activeModule={activeModule} setActiveModule={setActiveModule} />
+          {isAdmin && <ModuleTabButton id="library" label="Thư viện KPI" icon={<BookCopy size={16}/>} activeModule={activeModule} setActiveModule={setActiveModule} />}
+          <ModuleTabButton id="reports" label="Báo cáo thống kê" icon={<FileText size={16}/>} activeModule={activeModule} setActiveModule={setActiveModule} />
         </div>
       </div>
-      <div className="flex border-b overflow-x-auto"><TabButton id="ptm" label="Di động PTM" activeTab={activeTab} setActiveTab={setActiveTab} /><TabButton id="existing" label="Di động hiện hữu" activeTab={activeTab} setActiveTab={setActiveTab} /><TabButton id="internal" label="Kênh nội bộ" activeTab={activeTab} setActiveTab={setActiveTab} /><TabButton id="external" label="Kênh ngoài" activeTab={activeTab} setActiveTab={setActiveTab} />{isAdmin && <TabButton id="config" label="Cấu hình" icon={<Settings size={14} />} activeTab={activeTab} setActiveTab={setActiveTab} />}</div>
-      <div className="mt-6">{renderTabContent()}</div>
+      <div>{renderModule()}</div>
     </div>
   );
 };
 
-// TABS
-const PtmTab: React.FC<MobileOpsProps & { selectedMonth: string }> = ({ kpis, units, selectedMonth }) => {
-  const ptmKpiData = useMemo(() => {
-    const records = kpis.filter(r => r.period === selectedMonth && r.type === 'group'); if (records.length === 0) return { ptm: [], rev: [] };
-    const process = (kpiId: string) => {
-      let totalTarget = 0, totalActual = 0;
-      const unitData = units.filter(u => u.includeInMobileReport === true && u.name !== 'Trung tâm CSKH').map(unit => {
-        const record = records.find(r => r.entityId === unit.code); const target = record?.targets?.[kpiId]?.target || 0; const actual = record?.targets?.[kpiId]?.actual || 0; totalTarget += target; totalActual += actual;
-        return { name: unit.name, target, actual, percent: target > 0 ? Math.round((actual / target) * 100) : 0 };
-      });
-      return [{ name: 'Tổng VNPT Quảng Ninh', target: totalTarget, actual: totalActual, percent: totalTarget > 0 ? Math.round((totalActual / totalTarget) * 100) : 0 }, ...unitData];
+// ==================================
+// == 1. KPI LIBRARY (ADMIN ONLY)
+// ==================================
+const KpiLibraryAdmin: React.FC<MobileOpsProps> = (props) => {
+    const [activeTab, setActiveTab] = useState('config_cthd');
+    return (
+        <div className="bg-white p-8 rounded-[40px] shadow-sm border space-y-6">
+            <div className="flex border-b">
+                <AdminTab id="config_cthd" label="Cấu hình CTHĐ" icon={<Wand2 size={14}/>} activeTab={activeTab} setActiveTab={setActiveTab} />
+                <AdminTab id="library_kpi" label="Thư viện KPI" icon={<Package size={14}/>} activeTab={activeTab} setActiveTab={setActiveTab} />
+                <AdminTab id="setup_cthd" label="Setup CTHĐ" icon={<SlidersHorizontal size={14}/>} activeTab={activeTab} setActiveTab={setActiveTab} />
+                <AdminTab id="setup_source" label="Setup Nguồn" icon={<Database size={14}/>} activeTab={activeTab} setActiveTab={setActiveTab} />
+            </div>
+            <div className="pt-4">
+                {activeTab === 'setup_source' && <DataSourceSetupTab {...props} />}
+                {activeTab === 'setup_cthd' && <ActionProgramSetupTab {...props} />}
+                {activeTab === 'library_kpi' && <LibraryKpiSetupTab {...props} />}
+                {activeTab === 'config_cthd' && <ConfigureProgramsTab {...props} />}
+            </div>
+        </div>
+    );
+};
+
+// ... Sub-tabs for KpiLibraryAdmin ...
+const DataSourceSetupTab: React.FC<MobileOpsProps> = ({ dataSources, onRefresh }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [editingItem, setEditingItem] = useState<Partial<DataSource> | null>(null);
+    const handleSave = async (data: Partial<DataSource>) => {
+        const id = data.id || `ds_${Date.now()}`;
+        await dbClient.upsert('mobile_data_sources', id, { ...data, id });
+        onRefresh(); setIsOpen(false);
     };
-    return { ptm: process('mobile_ptm'), rev: process('mobile_rev') };
-  }, [kpis, units, selectedMonth]);
-  return (<div className="grid grid-cols-1 xl:grid-cols-2 gap-12"><StatDisplay title="Sản lượng di động PTM" data={ptmKpiData.ptm} unit="TB" color="#3b82f6" /><StatDisplay title="Doanh thu di động PTM" data={ptmKpiData.rev} unit="VNĐ" color="#8b5cf6" /></div>);
+    return (
+        <AdminSection title="Quản lý Nguồn dữ liệu" onAdd={() => { setEditingItem({}); setIsOpen(true); }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {dataSources.map(ds => (
+                    <div key={ds.id} className="bg-slate-50 border p-4 rounded-2xl flex justify-between items-center group">
+                        <div>
+                            <p className="font-bold text-sm text-slate-800">{ds.name}</p>
+                            <p className="text-xs text-blue-500 font-mono truncate max-w-[200px]">{ds.url}</p>
+                        </div>
+                        <AdminActionButtons onEdit={() => { setEditingItem(ds); setIsOpen(true); }} onDelete={async () => { if(confirm("Xóa?")) { await dbClient.delete('mobile_data_sources', ds.id); onRefresh(); }}} />
+                    </div>
+                ))}
+            </div>
+            {isOpen && <DataSourceModal item={editingItem} onSave={handleSave} onClose={() => setIsOpen(false)} />}
+        </AdminSection>
+    );
+};
+const LibraryKpiModal: React.FC<{item: Partial<LibraryKpi> | null, dataSources: DataSource[], onSave: (data: Partial<LibraryKpi>) => void, onClose: () => void}> = ({ item, dataSources, onSave, onClose }) => {
+    const [data, setData] = useState(item);
+    const [columns, setColumns] = useState<string[]>([]);
+    const [isReading, setIsReading] = useState(false);
+
+    if (!data) return null;
+
+    const handleReadData = async () => {
+        if (!data.dataSourceId) return;
+        const selectedDS = dataSources.find(ds => ds.id === data.dataSourceId);
+        if (!selectedDS?.url) return alert("Nguồn dữ liệu này chưa có URL.");
+
+        setIsReading(true);
+        try {
+            let finalUrl = selectedDS.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            if (!res.ok) throw new Error("Không thể tải file.");
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            if (rows.length > 0) {
+                setColumns(Object.keys(rows[0]));
+            } else {
+                alert("File Google Sheet rỗng hoặc không có dữ liệu.");
+                setColumns([]);
+            }
+        } catch (e: any) {
+            alert("Lỗi đọc dữ liệu từ Google Sheet: " + e.message);
+            setColumns([]);
+        } finally {
+            setIsReading(false);
+        }
+    };
+
+    const handleMappingChange = (key: 'entityIdCol' | 'targetCol' | 'actualCol', value: string) => {
+        setData(prevData => ({
+            ...prevData,
+            mapping: {
+                ...(prevData?.mapping || {}),
+                [key]: value
+            } as LibraryKpi['mapping']
+        }));
+    };
+
+    const MappingSelect: React.FC<{label: string, value: string, onChange: (val: string) => void}> = ({label, value, onChange}) => (
+        <div>
+            <label className="text-[10px] font-bold text-slate-400">{label}</label>
+            <select className="w-full border p-2 rounded-md mt-1 text-xs" value={value} onChange={e => onChange(e.target.value)}>
+                <option value="">-- Chọn cột --</option>
+                {columns.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+        </div>
+    );
+
+    return (
+        <Modal title="Thư viện KPI" onClose={onClose} onSave={() => onSave(data)}>
+            <div className="grid grid-cols-2 gap-4">
+                <InputField label="Mã KPI (không dấu, không cách)" value={data.code || ''} onChange={val => setData({...data, code: val.toLowerCase().replace(/\s/g, '_')})} />
+                <InputField label="Tên KPI" value={data.name || ''} onChange={val => setData({...data, name: val})} />
+                <InputField label="Đơn vị tính" value={data.unit || ''} onChange={val => setData({...data, unit: val})} />
+                <div>
+                    <label className="text-xs font-bold text-slate-500">Đối tượng</label>
+                    <select className="w-full border p-2 rounded-md mt-1" value={data.audience || 'group'} onChange={e => setData({...data, audience: e.target.value as any})}>
+                        <option value="group">Tập thể</option>
+                        <option value="personal">Cá nhân</option>
+                        <option value="both">Cả hai</option>
+                    </select>
+                </div>
+                <div className="col-span-2">
+                    <label className="text-xs font-bold text-slate-500">Nguồn dữ liệu</label>
+                    <div className="flex gap-2 items-center">
+                        <select className="flex-1 border p-2 rounded-md mt-1" value={data.dataSourceId || ''} onChange={e => { setData({...data, dataSourceId: e.target.value }); setColumns([]); }}>
+                            <option value="">-- Chọn nguồn --</option>
+                            {dataSources.map(ds => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
+                        </select>
+                        <button onClick={handleReadData} disabled={isReading || !data.dataSourceId} className="bg-slate-700 text-white text-xs font-bold px-4 py-2 rounded-md mt-1 flex items-center gap-1 disabled:opacity-50">
+                            {isReading ? <Loader2 className="animate-spin" size={14}/> : <Database size={14}/>} Đọc dữ liệu
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {columns.length > 0 && (
+                <div className="p-4 bg-slate-50 rounded-lg border space-y-3 animate-fade-in">
+                    <h4 className="text-xs font-bold text-slate-500">Ánh xạ cột dữ liệu</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <MappingSelect label="Cột Định danh" value={data.mapping?.entityIdCol || ''} onChange={val => handleMappingChange('entityIdCol', val)} />
+                        <MappingSelect label="Cột Kế hoạch" value={data.mapping?.targetCol || ''} onChange={val => handleMappingChange('targetCol', val)} />
+                        <MappingSelect label="Cột Thực hiện" value={data.mapping?.actualCol || ''} onChange={val => handleMappingChange('actualCol', val)} />
+                    </div>
+                </div>
+            )}
+        </Modal>
+    );
 };
 
-const ExistingMobileTab: React.FC<MobileOpsProps & { selectedMonth: string, mobileKpiDefs: KPIDefinition[], autocallTargets: any }> = ({ mobileData, selectedMonth, mobileKpiDefs, autocallTargets }) => {
-  const data = useMemo(() => {
-      const imported = mobileData.find(d => d.period === selectedMonth && d.dataType === 'autocall_group'); if (!imported?.data || !imported.mapping) return null;
-      const actuals = { ckn: 0, ckd: 0, package: 0 };
-      const cknDef = mobileKpiDefs.find(d => d.dataSource === 'autocall_group' && d.id.includes('ckn')); const ckdDef = mobileKpiDefs.find(d => d.dataSource === 'autocall_group' && d.id.includes('ckd')); const pkgDef = mobileKpiDefs.find(d => d.dataSource === 'autocall_group' && d.id.includes('package'));
-      imported.data.forEach((row: any) => {
-          if (cknDef) actuals.ckn += Number(row[imported.mapping[cknDef.id]] || 0);
-          if (ckdDef) actuals.ckd += Number(row[imported.mapping[ckdDef.id]] || 0);
-          if (pkgDef) actuals.package += Number(row[imported.mapping[pkgDef.id]] || 0);
-      });
-      return { actuals };
-  }, [mobileData, selectedMonth, mobileKpiDefs]);
-  if (!data) return <DataPlaceholder message="Không có dữ liệu AutoCall cho tháng này."/>;
-  return (<div className="space-y-12"><h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Doanh thu gia hạn, bán gói kênh AutoCall</h3><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><StatCardWithProgress title="DT Gia hạn gói CKN" actual={data.actuals.ckn} target={autocallTargets.ckn} unit="VNĐ" color="#3b82f6" /><StatCardWithProgress title="DT Gia hạn gói CKD" actual={data.actuals.ckd} target={autocallTargets.ckd} unit="VNĐ" color="#8b5cf6" /><StatCardWithProgress title="DT Bán gói" actual={data.actuals.package} target={autocallTargets.package} unit="VNĐ" color="#10b981" /><StatCardWithProgress title="Tổng Doanh thu" actual={data.actuals.ckn + data.actuals.ckd + data.actuals.package} target={autocallTargets.ckn + autocallTargets.ckd + autocallTargets.package} unit="VNĐ" color="#ef4444" /></div></div>);
+const LibraryKpiSetupTab: React.FC<MobileOpsProps> = ({ libraryKpis, dataSources, onRefresh }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [editingItem, setEditingItem] = useState<Partial<LibraryKpi> | null>(null);
+    const handleSave = async (data: Partial<LibraryKpi>) => {
+        const id = data.id || `lkpi_${Date.now()}`;
+        if (!data.code || !data.name || !data.unit || !data.audience || !data.dataSourceId) {
+            alert("Vui lòng điền đầy đủ thông tin cơ bản của KPI.");
+            return;
+        }
+        await dbClient.upsert('mobile_library_kpis', id, { ...data, id });
+        onRefresh(); setIsOpen(false);
+    };
+    return (
+        <AdminSection title="Quản lý Thư viện KPI" onAdd={() => { setEditingItem({ audience: 'group' }); setIsOpen(true); }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {libraryKpis.map(kpi => (
+                    <div key={kpi.id} className="bg-slate-50 border p-4 rounded-2xl group">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <p className="font-bold text-sm text-slate-800">{kpi.name}</p>
+                                <p className="text-xs text-slate-400 font-mono">{kpi.code} | ĐV: {kpi.unit}</p>
+                            </div>
+                            <AdminActionButtons onEdit={() => { setEditingItem(kpi); setIsOpen(true); }} onDelete={async () => { if(confirm("Xóa?")) { await dbClient.delete('mobile_library_kpis', kpi.id); onRefresh(); }}} />
+                        </div>
+                        <div className="text-[10px] font-bold mt-2 pt-2 border-t">
+                            <p>Nguồn: <span className="font-mono text-blue-600">{dataSources.find(ds => ds.id === kpi.dataSourceId)?.name || 'N/A'}</span></p>
+                            <p>Đối tượng: <span className="font-mono text-blue-600">{kpi.audience === 'group' ? 'Tập thể' : kpi.audience === 'personal' ? 'Cá nhân' : 'Cả hai'}</span></p>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {isOpen && <LibraryKpiModal item={editingItem} dataSources={dataSources} onSave={handleSave} onClose={() => setIsOpen(false)} />}
+        </AdminSection>
+    );
 };
 
-const InternalChannelTab: React.FC<MobileOpsProps & { selectedMonth: string, mobileKpiDefs: KPIDefinition[] }> = ({ mobileData, selectedMonth, mobileKpiDefs, users }) => {
-    const internalData = useMemo(() => {
-        const imported = mobileData.find(d => d.period === selectedMonth && d.dataType === 'internal_personal');
-        if (!imported?.data || !imported.mapping) return null;
-        const revenueKpi = mobileKpiDefs.find(k => k.dataSource === 'internal_personal' && k.id.includes('revenue'));
-        const hrmCodeKpi = mobileKpiDefs.find(k => k.dataSource === 'internal_personal' && k.id.includes('hrm_code'));
-        if (!revenueKpi || !hrmCodeKpi) return { tiers: [], details: [] };
+const ActionProgramModal: React.FC<{item: Partial<ActionProgram> | null, units: Unit[], onSave: (data: Partial<ActionProgram>) => void, onClose: () => void}> = ({ item, units, onSave, onClose }) => {
+    const [data, setData] = useState(item);
+    if (!data) return null;
+
+    const handleUnitSelection = (unitId: string, checked: boolean) => {
+        const currentIds = data.participatingUnitIds || [];
+        const newIds = checked ? [...currentIds, unitId] : currentIds.filter(id => id !== unitId);
+        setData({ ...data, participatingUnitIds: newIds });
+    };
+
+    return (
+        <Modal title="Chương trình hành động" onClose={onClose} onSave={() => onSave(data)}>
+            <InputField label="Mã CTHĐ" value={data.code || ''} onChange={val => setData({...data, code: val})} />
+            <InputField label="Tên CTHĐ" value={data.name || ''} onChange={val => setData({...data, name: val})} />
+            <div>
+                <label className="text-xs font-bold text-slate-500">Loại hình đánh giá</label>
+                <select className="w-full border p-2 rounded-md mt-1" value={data.evaluationType || 'group'} onChange={e => setData({...data, evaluationType: e.target.value as any})}>
+                    <option value="group">Tập thể</option>
+                    <option value="personal">Cá nhân</option>
+                    <option value="both">Cả hai</option>
+                </select>
+            </div>
+            <div>
+                <label className="text-xs font-bold text-slate-500">Đơn vị tham gia</label>
+                <div className="max-h-40 overflow-y-auto border rounded-md p-2 mt-1 grid grid-cols-2">
+                    {units.filter(u => u.level > 0).map(unit => (
+                        <label key={unit.id} className="flex items-center gap-2 text-sm p-1">
+                            <input type="checkbox" checked={(data.participatingUnitIds || []).includes(unit.id)} onChange={e => handleUnitSelection(unit.id, e.target.checked)} />
+                            {unit.name}
+                        </label>
+                    ))}
+                </div>
+            </div>
+        </Modal>
+    );
+};
+
+const ActionProgramSetupTab: React.FC<MobileOpsProps> = ({ actionPrograms, units, onRefresh }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [editingItem, setEditingItem] = useState<Partial<ActionProgram> | null>(null);
+    const handleSave = async (data: Partial<ActionProgram>) => {
+        const id = data.id || `ap_${Date.now()}`;
+        if (!data.code || !data.name || !data.evaluationType) {
+            alert("Vui lòng điền đầy đủ thông tin.");
+            return;
+        }
+        const payload = { 
+            ...data, 
+            id, 
+            kpiIds: data.kpiIds || [], 
+            participatingUnitIds: data.participatingUnitIds || [],
+            displayConfig: data.displayConfig || { type: 'graph', graphType: 'bar' }
+        };
+        await dbClient.upsert('mobile_action_programs', id, payload);
+        onRefresh(); setIsOpen(false);
+    };
+    return (
+        <AdminSection title="Quản lý Chương trình hành động" onAdd={() => { setEditingItem({ evaluationType: 'group' }); setIsOpen(true); }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {actionPrograms.map(ap => (
+                    <div key={ap.id} className="bg-slate-50 border p-4 rounded-2xl group">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <p className="font-bold text-sm text-slate-800">{ap.name}</p>
+                                <p className="text-xs text-slate-400 font-mono">{ap.code}</p>
+                            </div>
+                            <AdminActionButtons onEdit={() => { setEditingItem(ap); setIsOpen(true); }} onDelete={async () => { if(confirm("Xóa?")) { await dbClient.delete('mobile_action_programs', ap.id); onRefresh(); }}} />
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {isOpen && <ActionProgramModal item={editingItem} units={units} onSave={handleSave} onClose={() => setIsOpen(false)} />}
+        </AdminSection>
+    );
+};
+
+const ConfigureProgramsTab: React.FC<MobileOpsProps> = ({ actionPrograms, libraryKpis, onRefresh }) => {
+    const [selectedProgramId, setSelectedProgramId] = useState<string | null>(actionPrograms[0]?.id || null);
+
+    const selectedProgram = useMemo(() => actionPrograms.find(p => p.id === selectedProgramId), [actionPrograms, selectedProgramId]);
+
+    const availableKpis = useMemo(() => {
+        if (!selectedProgram) return [];
+        const programKpiIds = selectedProgram.kpiIds || [];
+        return libraryKpis.filter(kpi => !programKpiIds.includes(kpi.id) && (kpi.audience === selectedProgram.evaluationType || kpi.audience === 'both'));
+    }, [libraryKpis, selectedProgram]);
+    
+    const programKpis = useMemo(() => {
+        if (!selectedProgram) return [];
+        const programKpiIds = selectedProgram.kpiIds || [];
+        return programKpiIds.map(id => libraryKpis.find(kpi => kpi.id === id)).filter(Boolean) as LibraryKpi[];
+    }, [libraryKpis, selectedProgram]);
+
+    const handleAddKpi = async (kpiId: string) => {
+        if (!selectedProgram) return;
+        const currentKpiIds = selectedProgram.kpiIds || [];
+        const newKpiIds = [...currentKpiIds, kpiId];
+        await dbClient.update('mobile_action_programs', selectedProgram.id, { kpiIds: newKpiIds });
+        onRefresh();
+    };
+    
+    const handleRemoveKpi = async (kpiId: string) => {
+        if (!selectedProgram) return;
+        const currentKpiIds = selectedProgram.kpiIds || [];
+        const newKpiIds = currentKpiIds.filter(id => id !== kpiId);
+        await dbClient.update('mobile_action_programs', selectedProgram.id, { kpiIds: newKpiIds });
+        onRefresh();
+    };
+    
+    const handleDisplayConfigChange = async (field: string, value: string) => {
+        if (!selectedProgram) return;
+        let newConfig = { ...(selectedProgram.displayConfig || {}), [field]: value };
+        if (field === 'type') {
+            if (value === 'graph') {
+                delete newConfig.tableType;
+                newConfig.graphType = 'bar';
+            } else {
+                delete newConfig.graphType;
+                newConfig.tableType = 'normal';
+            }
+        }
+        await dbClient.update('mobile_action_programs', selectedProgram.id, { displayConfig: newConfig });
+        onRefresh();
+    };
+
+    return (
+        <AdminSection title="Cấu hình chỉ tiêu cho Chương trình hành động" onAdd={() => alert("Vui lòng tạo CTHĐ ở tab 'Setup CTHĐ' trước.")}>
+            <div className="flex flex-col md:flex-row gap-8">
+                <div className="md:w-1/3 space-y-2">
+                    <h4 className="text-xs font-bold text-slate-500">1. Chọn CTHĐ</h4>
+                    {actionPrograms.map(p => (
+                        <button key={p.id} onClick={() => setSelectedProgramId(p.id)} className={`w-full text-left p-3 rounded-lg border text-sm font-bold transition-all ${selectedProgramId === p.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'}`}>
+                            {p.name}
+                        </button>
+                    ))}
+                </div>
+                {selectedProgram && (
+                    <div className="flex-1 p-6 bg-slate-50 rounded-2xl border space-y-6">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                                <h4 className="text-xs font-bold text-slate-500">2. Các KPI đã chọn</h4>
+                                <div className="space-y-2 min-h-[100px] bg-white border p-2 rounded-lg">
+                                    {programKpis.map(kpi => (
+                                        <div key={kpi.id} className="bg-slate-50 p-2 rounded-md border flex items-center justify-between text-xs">
+                                            <span className="font-bold">{kpi.name}</span>
+                                            <button onClick={() => handleRemoveKpi(kpi.id)} className="p-1 text-red-500 hover:bg-red-50 rounded-full"><Trash2 size={12}/></button>
+                                        </div>
+                                    ))}
+                                    {programKpis.length === 0 && <p className="text-xs italic text-slate-400 p-4 text-center">Kéo KPI từ cột bên phải vào đây.</p>}
+                                </div>
+                            </div>
+                            <div className="space-y-3">
+                                <h4 className="text-xs font-bold text-slate-500">3. Thêm KPI từ thư viện</h4>
+                                <div className="space-y-2 max-h-64 overflow-y-auto bg-white border p-2 rounded-lg">
+                                    {availableKpis.map(kpi => (
+                                        <div key={kpi.id} className="bg-slate-50 p-2 rounded-md border flex items-center justify-between text-xs">
+                                            <span className="font-bold">{kpi.name}</span>
+                                            <button onClick={() => handleAddKpi(kpi.id)} className="p-1 text-green-500 hover:bg-green-50 rounded-full"><Plus size={12}/></button>
+                                        </div>
+                                    ))}
+                                    {availableKpis.length === 0 && <p className="text-xs italic text-slate-400 p-4 text-center">Không có KPI phù hợp.</p>}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="border-t pt-6 space-y-4">
+                            <h4 className="text-xs font-bold text-slate-500">4. Cấu hình hiển thị</h4>
+                            <div className="grid grid-cols-2 gap-4 bg-white p-4 rounded-lg border">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400">Hình thức</label>
+                                    <select className="w-full border p-2 rounded-md mt-1 text-xs" value={selectedProgram.displayConfig?.type || 'graph'} onChange={e => handleDisplayConfigChange('type', e.target.value)}>
+                                        <option value="graph">Biểu đồ (Graph)</option>
+                                        <option value="table">Bảng (Table)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400">Loại chi tiết</label>
+                                    {selectedProgram.displayConfig?.type === 'table' ? (
+                                        <select className="w-full border p-2 rounded-md mt-1 text-xs" value={selectedProgram.displayConfig?.tableType || 'normal'} onChange={e => handleDisplayConfigChange('tableType', e.target.value)}>
+                                            <option value="normal">Bảng thường</option>
+                                            <option value="with_bars">Bảng với thanh tiến trình</option>
+                                            <option value="heatmap">Bảng heatmap</option>
+                                        </select>
+                                    ) : (
+                                        <select className="w-full border p-2 rounded-md mt-1 text-xs" value={selectedProgram.displayConfig?.graphType || 'bar'} onChange={e => handleDisplayConfigChange('graphType', e.target.value)}>
+                                            <option value="bar">Biểu đồ cột</option>
+                                            <option value="pie">Biểu đồ tròn</option>
+                                            <option value="line">Biểu đồ đường</option>
+                                        </select>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </AdminSection>
+    );
+};
+
+// ==================================
+// == 2. ACTION PROGRAMS VIEW (ALL USERS)
+// ==================================
+const ActionProgramsView: React.FC<MobileOpsProps> = ({ actionPrograms, libraryKpis, units, importedData, currentUser, dataSources, onRefresh }) => {
+    const [selectedProgram, setSelectedProgram] = useState<ActionProgram | null>(null);
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    const myPrograms = useMemo(() => {
+        if (currentUser.username === 'admin') return actionPrograms;
+        const myUnitId = currentUser.unitId;
+        return actionPrograms.filter(p => (p.participatingUnitIds || []).includes(myUnitId));
+    }, [actionPrograms, currentUser]);
+
+    useEffect(() => {
+        if (myPrograms.length > 0 && !selectedProgram) {
+            setSelectedProgram(myPrograms[0]);
+        } else if (myPrograms.length > 0 && selectedProgram && !myPrograms.find(p => p.id === selectedProgram.id)) {
+            setSelectedProgram(myPrograms[0]);
+        } else if (myPrograms.length === 0) {
+            setSelectedProgram(null);
+        }
+    }, [myPrograms, selectedProgram]);
+    
+    const handleSyncAllData = async () => {
+        setIsSyncing(true);
+        let totalSynced = 0;
+        try {
+            for (const ds of dataSources) {
+                if (!ds.url) continue;
+                let finalUrl = ds.url.trim();
+                if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+                const res = await fetch(finalUrl);
+                if (!res.ok) continue;
+                const csv = await res.text();
+                const wb = XLSX.read(csv, { type: 'string' });
+                const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                if (rows.length > 0) {
+                    await dbClient.upsert('mobile_imported_data', `${ds.id}_${selectedMonth}`, { data: rows });
+                    totalSynced += rows.length;
+                }
+            }
+            alert(`Đồng bộ hoàn tất! ${totalSynced} dòng dữ liệu đã được cập nhật cho tháng ${selectedMonth}.`);
+            onRefresh();
+        } catch (e) {
+            alert("Có lỗi xảy ra trong quá trình đồng bộ.");
+        } finally {
+            setIsSyncing(false);
+        }
+    }
+
+
+    const programData = useMemo(() => {
+        if (!selectedProgram || importedData.length === 0 || !selectedProgram.participatingUnitIds) return [];
+        const programKpis = libraryKpis.filter(k => (selectedProgram.kpiIds || []).includes(k.id));
+        if (programKpis.length === 0) return [];
         
-        const tiers = { tier1: 0, tier2: 0, tier3: 0, tier4: 0 };
-        const details = imported.data.map((row: any) => {
-            const revenue = Number(row[imported.mapping[revenueKpi.id]] || 0);
-            if (revenue < 5000000) tiers.tier1++; else if (revenue < 10000000) tiers.tier2++; else if (revenue < 15000000) tiers.tier3++; else tiers.tier4++;
-            const hrmCode = row[imported.mapping[hrmCodeKpi.id]];
-            const user = users.find(u => u.hrmCode === hrmCode);
-            return { name: user ? user.fullName : hrmCode, revenue };
-        }).sort((a,b) => b.revenue - a.revenue);
+        const unitScores = selectedProgram.participatingUnitIds.map(unitId => {
+            const unit = units.find(u => u.id === unitId);
+            if (!unit) return { name: 'Unknown', score: 0 };
 
-        const tierDataForChart = [{ name: '< 5 triệu', 'Số lượng NVKD': tiers.tier1 }, { name: '5 - <10 triệu', 'Số lượng NVKD': tiers.tier2 }, { name: '10 - <15 triệu', 'Số lượng NVKD': tiers.tier3 }, { name: '>= 15 triệu', 'Số lượng NVKD': tiers.tier4 }];
-        return { tiers: tierDataForChart, details };
-    }, [mobileData, selectedMonth, mobileKpiDefs, users]);
-    if (!internalData) return <DataPlaceholder message="Không có dữ liệu kênh nội bộ cho tháng này."/>;
-    return (<div className="space-y-12"><div className="grid grid-cols-1 xl:grid-cols-2 gap-12"><div className="bg-white p-8 rounded-[32px] shadow-sm border space-y-6"><h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Phân loại NVKD theo Doanh thu</h3><ResponsiveContainer width="100%" height={300}><BarChart data={internalData.tiers} margin={{ top: 20, right: 20, bottom: 20, left: -20 }}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" fontSize={10} fontWeight="bold" /><YAxis allowDecimals={false}/><Tooltip /><Bar dataKey="Số lượng NVKD" fill="#8884d8" /></BarChart></ResponsiveContainer></div><div className="bg-white p-8 rounded-[32px] shadow-sm border space-y-6"><h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Chi tiết Doanh thu theo NVKD</h3><div className="overflow-y-auto max-h-[300px]"><table className="w-full text-xs"><thead><tr className="font-black text-slate-400 uppercase"><th className="p-2 text-left">Tên NVKD</th><th className="p-2 text-right">Doanh thu (VNĐ)</th></tr></thead><tbody className="font-bold divide-y">{internalData.details.map((item, i) => (<tr key={i}><td className="p-2">{item.name}</td><td className="p-2 text-right font-mono">{item.revenue.toLocaleString()}</td></tr>))}</tbody></table></div></div></div></div>);
+            let totalPercent = 0;
+            let kpiCount = 0;
+
+            programKpis.forEach(kpi => {
+                const relevantData = importedData.find(d => d.id === `${kpi.dataSourceId}_${selectedMonth}`);
+                if(!relevantData || !kpi.mapping) return;
+
+                const unitDataRow = relevantData.data.find((row: any) => String(row[kpi.mapping!.entityIdCol]) === String(unit.code));
+                if(!unitDataRow) return;
+
+                const target = unitDataRow[kpi.mapping.targetCol];
+                const actual = unitDataRow[kpi.mapping.actualCol];
+
+                if (target !== undefined && actual !== undefined && Number(target) > 0) {
+                    totalPercent += (Number(actual) / Number(target)) * 100;
+                    kpiCount++;
+                }
+            });
+            return {
+                name: unit?.name || 'Unknown',
+                score: kpiCount > 0 ? Math.round(totalPercent / kpiCount) : 0,
+            };
+        });
+
+        return unitScores.sort((a,b) => b.score - a.score);
+
+    }, [selectedProgram, importedData, libraryKpis, units, selectedMonth]);
+    
+    return (
+        <div className="flex flex-col md:flex-row gap-8">
+            <div className="md:w-1/4 space-y-2">
+                 {myPrograms.map(p => (
+                    <button key={p.id} onClick={() => setSelectedProgram(p)} className={`w-full text-left p-4 rounded-xl border-2 text-sm font-black transition-all ${selectedProgram?.id === p.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'}`}>
+                        {p.name}
+                    </button>
+                 ))}
+                 {myPrograms.length === 0 && <div className="p-4 text-center text-xs italic text-slate-500">Bạn không tham gia CTHĐ nào.</div>}
+            </div>
+            <div className="flex-1 bg-white rounded-[40px] shadow-sm border p-8 min-h-[400px]">
+                {selectedProgram ? (
+                    <div className="space-y-6">
+                        <div className="flex justify-between items-start">
+                            <h3 className="font-black text-lg text-slate-800">{selectedProgram.name}</h3>
+                            <div className="flex items-center gap-2">
+                                <input type="month" className="border-2 rounded-xl px-4 py-2 font-bold text-xs bg-slate-50 outline-none" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+                                <button onClick={handleSyncAllData} disabled={isSyncing} className="bg-blue-500 text-white p-2.5 rounded-xl hover:bg-blue-600 disabled:bg-slate-300">
+                                    {isSyncing ? <Loader2 className="animate-spin"/> : <RefreshCw />}
+                                </button>
+                            </div>
+                        </div>
+                        <div className="h-96">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={programData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+                                    <XAxis type="number" domain={[0, 'dataMax + 20']} tickFormatter={(v) => `${v}%`} />
+                                    <YAxis type="category" dataKey="name" width={150} interval={0} tick={{ fontSize: 10, width: 140 }} />
+                                    <Tooltip formatter={(value: number) => `${value ? value.toFixed(2) : 0}%`} />
+                                    <Bar dataKey="score" fill="#0068FF" barSize={20} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-center h-full text-slate-400">Chọn một chương trình để xem.</div>
+                )}
+            </div>
+        </div>
+    );
 };
 
-const ExternalChannelTab: React.FC<MobileOpsProps & { selectedMonth: string, mobileKpiDefs: KPIDefinition[] }> = ({ mobileData, selectedMonth, mobileKpiDefs }) => {
-    const externalData = useMemo(() => {
-        const imported = mobileData.find(d => d.period === selectedMonth && d.dataType === 'external_group');
-        if (!imported?.data || !imported.mapping) return null;
-        const nameKpi = mobileKpiDefs.find(k => k.dataSource === 'external_group' && k.id.includes('name'));
-        const revenueKpi = mobileKpiDefs.find(k => k.dataSource === 'external_group' && k.id.includes('revenue'));
-        const subsKpi = mobileKpiDefs.find(k => k.dataSource === 'external_group' && k.id.includes('subs'));
-        if (!nameKpi) return [];
-        return imported.data.map((row: any) => ({ name: row[imported.mapping[nameKpi.id]] || 'N/A', revenue: revenueKpi ? Number(row[imported.mapping[revenueKpi.id]] || 0) : 0, subs: subsKpi ? Number(row[imported.mapping[subsKpi.id]] || 0) : 0, })).sort((a,b) => b.revenue - a.revenue);
-    }, [mobileData, selectedMonth, mobileKpiDefs]);
-    if (!externalData) return <DataPlaceholder message="Không có dữ liệu kênh ngoài cho tháng này."/>;
-    return (<div className="bg-white p-8 rounded-[32px] shadow-sm border space-y-6"><h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Hiệu quả các điểm bán kênh ngoài</h3><div className="overflow-y-auto max-h-[500px]"><table className="w-full text-xs"><thead><tr className="font-black text-slate-400 uppercase"><th className="p-2 text-left">Tên điểm bán / Kênh</th><th className="p-2 text-right">Sản lượng PTM</th><th className="p-2 text-right">Doanh thu (VNĐ)</th></tr></thead><tbody className="font-bold divide-y">{externalData.map((item, i) => (<tr key={i}><td className="p-2">{item.name}</td><td className="p-2 text-right font-mono">{item.subs.toLocaleString()}</td><td className="p-2 text-right font-mono">{item.revenue.toLocaleString()}</td></tr>))}</tbody></table></div></div>);
+
+// ==================================
+// == 3. REPORTS VIEW (ALL USERS)
+// ==================================
+const ReportsView: React.FC<MobileOpsProps> = (props) => {
+    // ... logic for reports ...
+    return (
+        <div className="bg-white rounded-[40px] shadow-sm border p-8">
+            <div>Báo cáo thống kê (Tính năng đang được phát triển)</div>
+        </div>
+    );
 };
 
-const ConfigTab: React.FC<MobileOpsProps & { mobileKpiDefs: KPIDefinition[], onRefreshData: () => void, selectedMonth: string }> = ({ onRefresh, selectedMonth, mobileKpiDefs, onRefreshData }) => {
-  const [autocallTargets, setAutocallTargets] = useState({ ckn: 0, ckd: 0, package: 0 });
-  useEffect(() => { const fetchTargets = async () => { const t = await dbClient.getById('mobile_targets', selectedMonth); setAutocallTargets(t?.autocall || { ckn: 0, ckd: 0, package: 0 }); }; fetchTargets(); }, [selectedMonth]);
-  const handleSaveTargets = async () => { await dbClient.upsert('mobile_targets', selectedMonth, { autocall: autocallTargets }); alert("Đã lưu kế hoạch AutoCall!"); onRefreshData(); };
-  return (
-      <div className="space-y-12">
-          {Object.entries(DATA_CONFIG_STRUCTURE).map(([sectionTitle, configs]) => (
-              <div key={sectionTitle} className="bg-white rounded-[48px] shadow-sm border p-12 space-y-8">
-                  <h3 className="text-2xl font-black text-slate-800 uppercase">{sectionTitle}</h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                      {configs.map(cfg => (<DataSourceConfig key={cfg.key} dataSourceKey={cfg.key} title={cfg.title} kpiDefs={mobileKpiDefs.filter(d => d.dataSource === cfg.key)} selectedMonth={selectedMonth} onRefresh={onRefresh} onRefreshDefs={onRefreshData} />))}
-                  </div>
-              </div>
-          ))}
-          <div className="bg-white rounded-[48px] shadow-sm border p-12 space-y-8"><div className="flex items-center gap-6 border-b pb-8"><div className="bg-teal-600 p-5 rounded-[32px] text-white"><Target size={40}/></div><div><h3 className="text-2xl font-black text-slate-800 uppercase">Kế hoạch Doanh thu AutoCall</h3><p className="text-xs text-slate-400 font-bold uppercase mt-1">Tháng: {selectedMonth}</p></div></div><div className="grid grid-cols-1 md:grid-cols-3 gap-4"><InputField type="number" label="DT Gia hạn CKN (VNĐ)" value={autocallTargets.ckn} onChange={v => setAutocallTargets(d => ({...d, ckn: Number(v)}))} /><InputField type="number" label="DT Gia hạn CKD (VNĐ)" value={autocallTargets.ckd} onChange={v => setAutocallTargets(d => ({...d, ckd: Number(v)}))} /><InputField type="number" label="DT Bán gói (VNĐ)" value={autocallTargets.package} onChange={v => setAutocallTargets(d => ({...d, package: Number(v)}))} /></div><div className="text-right"><button onClick={handleSaveTargets} className="bg-teal-500 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-teal-600">Lưu Kế hoạch</button></div></div>
-      </div>
-  );
+// ==================================
+// == HELPER & UI COMPONENTS
+// ==================================
+const ModuleTabButton: React.FC<{id: string, label: string, icon: React.ReactNode, activeModule: string, setActiveModule: (id: string) => void}> = ({ id, label, icon, activeModule, setActiveModule }) => (
+    <button onClick={() => setActiveModule(id)} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${activeModule === id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+        {icon} {label}
+    </button>
+);
+
+const AdminTab: React.FC<{id: string, label: string, icon: React.ReactNode, activeTab: string, setActiveTab: (id: string) => void}> = ({ id, label, icon, activeTab, setActiveTab }) => (
+    <button onClick={() => setActiveTab(id)} className={`flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all border-b-2 ${activeTab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-800'}`}>
+        {icon} {label}
+    </button>
+);
+
+const AdminSection: React.FC<{title: string, onAdd: () => void, children: React.ReactNode}> = ({ title, onAdd, children }) => (
+    <div className="space-y-4">
+        <div className="flex justify-between items-center">
+            <h3 className="text-sm font-black uppercase tracking-widest text-slate-600">{title}</h3>
+            <button onClick={onAdd} className="bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-blue-600"><Plus size={14}/> Thêm mới</button>
+        </div>
+        <div>{children}</div>
+    </div>
+);
+
+const AdminActionButtons: React.FC<{onEdit: () => void, onDelete: () => void}> = ({ onEdit, onDelete }) => (
+    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onEdit} className="p-2 hover:bg-blue-100 text-blue-600 rounded-md"><Edit2 size={14}/></button>
+        <button onClick={onDelete} className="p-2 hover:bg-red-100 text-red-500 rounded-md"><Trash2 size={14}/></button>
+    </div>
+);
+
+const DataSourceModal: React.FC<{item: Partial<DataSource> | null, onSave: (data: Partial<DataSource>) => void, onClose: () => void}> = ({ item, onSave, onClose }) => {
+    const [data, setData] = useState(item);
+    if (!data) return null;
+    return (
+        <Modal title="Nguồn dữ liệu" onClose={onClose} onSave={() => onSave(data)}>
+            <InputField label="Tên nguồn dữ liệu" value={data.name || ''} onChange={val => setData({...data, name: val})} />
+            <InputField label="Link Google Sheet (CSV)" value={data.url || ''} onChange={val => setData({...data, url: val})} />
+        </Modal>
+    );
 };
 
-// REUSABLE & HELPER COMPONENTS
-const DataSourceConfig: React.FC<{dataSourceKey: string, title: string, kpiDefs: KPIDefinition[], selectedMonth: string, onRefresh: ()=>void, onRefreshDefs: ()=>void}> = ({dataSourceKey, title, kpiDefs, selectedMonth, onRefresh, onRefreshDefs}) => {
-    const [config, setConfig] = useState<any>({}); const [columns, setColumns] = useState<string[]>([]); const [isReading, setIsReading] = useState(false); const [isSyncing, setIsSyncing] = useState(false); const [isDefModalOpen, setIsDefModalOpen] = useState(false); const [editingDef, setEditingDef] = useState<Partial<KPIDefinition> | null>(null);
-    useEffect(()=>{ const fetcher = async () => { const c = await dbClient.getById('mobile_data_configs', `${dataSourceKey}_${selectedMonth}`); setConfig(c || {}); setColumns([]); }; fetcher(); }, [dataSourceKey, selectedMonth]);
-    const handleRead = async () => { if (!config.url) return; setIsReading(true); try { let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv'; const res = await fetch(finalUrl); const csv = await res.text(); const wb = XLSX.read(csv, { type: 'string' }); const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); if(rows.length>0) setColumns(Object.keys(rows[0])); else alert("File rỗng"); } catch (e) { alert("Lỗi đọc file"); } finally { setIsReading(false); } };
-    const handleSaveConfig = async () => { try { await dbClient.upsert('mobile_data_configs', `${dataSourceKey}_${selectedMonth}`, { period: selectedMonth, dataType: dataSourceKey, url: config.url, mapping: config.mapping }); alert(`Đã lưu cấu hình link cho ${title} thành công!`); } catch (e) { alert("Lỗi khi lưu cấu hình."); console.error(e); }};
-    const handleSync = async () => { if (!config.url) return; setIsSyncing(true); try { let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv'; const res = await fetch(finalUrl); const csv = await res.text(); const wb = XLSX.read(csv, { type: 'string' }); const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); await dbClient.upsert('mobile_imported_data', `${dataSourceKey}_${selectedMonth}`, { period: selectedMonth, dataType: dataSourceKey, data: rows, mapping: config.mapping }); onRefresh(); alert(`Đồng bộ ${rows.length} dòng thành công!`); } catch (e) { alert("Lỗi đồng bộ."); } finally { setIsSyncing(false); } };
-    return (<div className="bg-slate-50 border rounded-[32px] p-8 space-y-6"><h4 className="text-base font-black text-slate-700 uppercase">{title}</h4><div><input placeholder="URL Google Sheet (CSV)..." value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border p-3 rounded-xl font-mono text-xs" /><div className="flex justify-end gap-2 mt-2"><button onClick={handleRead} disabled={isReading||!config.url} className="bg-slate-700 text-white text-[9px] font-black px-4 py-2 rounded-lg">{isReading?<Loader2 className="animate-spin"/>:'Đọc Cột'}</button><button onClick={handleSaveConfig} className="text-slate-400 text-[9px] font-black px-4 py-2 rounded-lg">Lưu Link</button></div></div>{columns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase">Ánh xạ dữ liệu:</label>{kpiDefs.map(def => <div key={def.id} className="grid grid-cols-2 items-center gap-2"><span className="text-[10px] font-bold truncate">{def.name}</span><select className="w-full border p-1 rounded-md text-[10px]" value={config.mapping?.[def.id] || ''} onChange={e => setConfig({...config, mapping: {...(config.mapping || {}), [def.id]: e.target.value}})}><option value="">-- Chọn --</option>{columns.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}</div>)}<div className="border-t pt-4 space-y-3"><div className="flex justify-between items-center"><label className="text-[10px] font-black uppercase">Bộ chỉ tiêu:</label><button onClick={()=>{setEditingDef({dataSource: dataSourceKey}); setIsDefModalOpen(true);}} className="bg-green-100 text-green-700 p-1 rounded-full"><Plus size={12}/></button></div>{kpiDefs.map(def => <KpiDefItem key={def.id} def={def} onEdit={() => {setEditingDef(def); setIsDefModalOpen(true);}} onDelete={async () => { if(confirm("Xóa?")){await dbClient.delete('mobile_kpi_definitions', def.id); onRefreshDefs();}}}/>)}</div><button onClick={handleSync} disabled={isSyncing || !config.url} className="w-full bg-blue-600 text-white py-3 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2">{isSyncing?<Loader2 className="animate-spin"/>:<Import size={14}/>}Đồng bộ dữ liệu</button>{isDefModalOpen && <KpiDefModal def={editingDef} onSave={onRefreshDefs} onClose={() => setIsDefModalOpen(false)} allDefs={kpiDefs} />}</div>);
-};
-const TabButton: React.FC<{ id: string, label: string, activeTab: string, setActiveTab: (id: string) => void, icon?: React.ReactElement }> = ({ id, label, activeTab, setActiveTab, icon }) => (<button onClick={() => setActiveTab(id)} className={`flex shrink-0 items-center gap-2 px-6 py-3 text-sm font-black transition-all border-b-2 ${activeTab === id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{icon} {label}</button>);
-const StatDisplay: React.FC<{ title: string, data: any[], unit: string, color: string }> = ({ title, data, unit, color }) => (<div className="bg-white p-8 rounded-[32px] shadow-sm border space-y-6"><h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">{title}</h3><div className="space-y-2 max-h-[450px] overflow-y-auto">{data.length > 1 ? data.map((item, idx) => (<div key={idx} className={`p-2.5 rounded-xl ${item.name.includes('Tổng') ? 'bg-slate-100' : ''}`}><div className="flex justify-between items-center mb-1.5"><span className={`text-[11px] font-black truncate pr-4 ${item.name.includes('Tổng') ? 'text-blue-600' : 'text-slate-700'}`}>{item.name}</span><span className="text-[10px] font-bold text-slate-500">{item.actual.toLocaleString()} / <span className="text-slate-400">{item.target.toLocaleString()}</span></span></div><div className="flex items-center gap-2"><div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.min(item.percent, 100)}%`, backgroundColor: color }} /></div><span className="font-black text-xs" style={{ color }}>{item.percent}%</span></div></div>)) : <DataPlaceholder message="Không có dữ liệu."/>}</div></div>);
-const InputField: React.FC<{label: string, value: any, onChange: (v: string) => void, type?: string}> = ({label, value, onChange, type='text'}) => (<div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">{label}</label><input type={type} className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={value} onChange={e => onChange(e.target.value)} /></div>);
-const DataPlaceholder: React.FC<{message: string}> = ({message}) => (<div className="text-center text-slate-400 italic p-10 bg-white rounded-3xl border">{message}</div>);
-const StatCardWithProgress: React.FC<{ title: string, actual: number, target: number, unit: string, color: string }> = ({ title, actual, target, unit, color }) => { const percent = target > 0 ? Math.round((actual / target) * 100) : 0; const isCurrency = unit === 'VNĐ'; const displayActual = isCurrency ? (actual / 1000000).toFixed(2) + 'tr' : actual.toLocaleString(); const displayTarget = isCurrency ? (target / 1000000).toFixed(2) + 'tr' : target.toLocaleString(); return (<div className="bg-white p-6 rounded-[32px] border shadow-sm space-y-4"><div className="flex justify-between items-start"><h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</h4><div className={`font-black text-lg`} style={{ color }}>{percent}%</div></div><div><div className="text-2xl font-black text-slate-800">{displayActual}</div><div className="text-[10px] font-mono text-slate-400">KH: {displayTarget}</div></div><div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }} /></div></div>); };
-const KpiDefItem: React.FC<{def: KPIDefinition, onEdit:()=>void, onDelete:()=>void}> = ({def, onEdit, onDelete}) => (<div className="flex items-center justify-between p-2 bg-white rounded-lg border group text-[10px]"><span className="font-bold text-slate-800 truncate pr-2">{def.name}</span><div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={onEdit} className="p-1 hover:bg-slate-100 rounded text-blue-600"><Edit3 size={12}/></button><button onClick={onDelete} className="p-1 hover:bg-slate-100 rounded text-red-500"><Trash2 size={12}/></button></div></div>);
-const KpiDefModal: React.FC<{def: Partial<KPIDefinition>|null, onClose:()=>void, onSave:()=>void, allDefs: KPIDefinition[]}> = ({def, onClose, onSave, allDefs}) => {
-    const [formData, setFormData] = useState<Partial<KPIDefinition>|null>(null); const [isProcessing, setIsProcessing] = useState(false); useEffect(() => { setFormData(def); }, [def]); if (!formData) return null;
-    const handleSave = async () => { if (!formData.id || !formData.name) return alert("Mã và Tên là bắt buộc."); if (!def?.id && allDefs.some(d => d.id === formData.id)) return alert(`Mã "${formData.id}" đã tồn tại.`); setIsProcessing(true); try { await dbClient.upsert('mobile_kpi_definitions', formData.id, formData); onSave(); onClose(); } catch (e) { alert("Lỗi khi lưu."); } finally { setIsProcessing(false); } };
-    return (<div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-white rounded-[40px] w-full max-w-lg shadow-2xl border"><div className="p-8 border-b bg-slate-50 flex justify-between items-center"><h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{def?.id ? 'CẬP NHẬT' : 'TẠO MỚI'} CHỈ TIÊU</h3><button onClick={onClose} className="p-2 hover:bg-red-50 rounded-full"><X/></button></div><div className="p-10 space-y-6"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã (Key)</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-mono text-xs" value={formData.id || ''} onChange={e => setFormData({...formData, id: e.target.value.toLowerCase().replace(/\s/g, '_')})} disabled={!!def?.id} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tên</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} /></div><div className="grid grid-cols-2 gap-5"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Đơn vị</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.unit || ''} onChange={e => setFormData({...formData, unit: e.target.value})} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nguồn</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-mono text-xs" value={formData.dataSource || ''} disabled /></div></div></div><div className="p-8 border-t bg-slate-50 flex justify-end gap-4"><button onClick={onClose} className="px-8 py-3 text-slate-400 font-black text-xs uppercase">Hủy</button><button onClick={handleSave} disabled={isProcessing} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase shadow-xl flex items-center gap-2">{isProcessing ? <Loader2 className="animate-spin"/> : <Save/>} LƯU</button></div></div></div>);
-}
+const Modal: React.FC<{title: string, children: React.ReactNode, onClose: () => void, onSave: () => void}> = ({ title, children, onClose, onSave }) => (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+            <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold">{title}</h3><button onClick={onClose}><X size={20}/></button></div>
+            <div className="p-6 space-y-4">{children}</div>
+            <div className="p-4 border-t flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 rounded-lg text-sm">Hủy</button><button onClick={onSave} className="px-4 py-2 rounded-lg text-sm bg-blue-600 text-white">Lưu</button></div>
+        </div>
+    </div>
+);
 
-export default MobileOps;
+const InputField: React.FC<{label: string, value: string, onChange: (val: string) => void}> = ({ label, value, onChange }) => (
+    <div>
+        <label className="text-xs font-bold text-slate-500">{label}</label>
+        <input className="w-full border p-2 rounded-md mt-1" value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+);
+
+const AccessDenied = () => (
+    <div className="text-center p-10 bg-red-50 border border-red-200 rounded-2xl">
+        <h3 className="font-bold text-red-600">Truy cập bị từ chối</h3>
+        <p className="text-sm text-slate-600">Bạn không có quyền truy cập vào module này.</p>
+    </div>
+);
+
+export default MobileOpsDashboard;
