@@ -79,7 +79,7 @@ const MobileKpiView: React.FC<{
                 };
             })
             .filter(d => d.target > 0 || d.actual > 0)
-            .sort((a, b) => b.percent - a.percent);
+            .sort((a, b) => (b?.percent || 0) - (a?.percent || 0));
     }, [units, importedData, config]);
 
     const handleReadSheet = async () => {
@@ -136,11 +136,14 @@ const MobileKpiView: React.FC<{
     };
 
     const CustomBarLabel: React.FC<any> = ({ x, y, width, value, payload }) => {
-        if (width < 30) return null;
+        if (width < 30 || !payload) return null;
+        const formattedValue = (value !== null && value !== undefined) ? value.toLocaleString() : '';
+        const percentValue = (payload.percent !== null && payload.percent !== undefined) ? `${payload.percent}%` : '';
+        
         return (
             <g>
-                <text x={x + width / 2} y={y - 20} fill="#334155" textAnchor="middle" dy={-6} className="text-sm font-black">{value.toLocaleString()}</text>
-                <text x={x + width / 2} y={y - 8} fill="#0068FF" textAnchor="middle" dy={6} className="text-xs font-bold">{`${payload.percent}%`}</text>
+                <text x={x + width / 2} y={y - 20} fill="#334155" textAnchor="middle" dy={-6} className="text-sm font-black">{formattedValue}</text>
+                <text x={x + width / 2} y={y - 8} fill="#0068FF" textAnchor="middle" dy={6} className="text-xs font-bold">{percentValue}</text>
             </g>
         );
     };
