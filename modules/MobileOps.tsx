@@ -118,19 +118,20 @@ const MobileKpiView: React.FC<{
         }
     };
     
-    const handleSaveConfig = async () => {
-        const configId = `${type}_${selectedMonth}`;
-        await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type, period: selectedMonth });
-        alert("Đã lưu cấu hình!");
-    };
-
-    const handleSyncData = async () => {
-        if (!config.url || !config.mapping?.unitCodeCol) return alert("Vui lòng nhập URL và ánh xạ cột Mã đơn vị.");
+    const handleSaveAndSync = async () => {
+        if (!config.url || !config.mapping?.unitCodeCol || !config.mapping?.targetCol || !config.mapping?.actualCol) {
+            return alert("Vui lòng nhập URL Google Sheet và ánh xạ đầy đủ các cột: Mã đơn vị, Kế hoạch, Thực hiện.");
+        }
         setIsProcessing(true);
         try {
+            const configId = `${type}_${selectedMonth}`;
+            await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type, period: selectedMonth });
+
             let finalUrl = config.url.trim();
             if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
+            if (!res.ok) throw new Error("Không thể tải file từ Google Sheet. Kiểm tra lại link và quyền truy cập.");
+            
             const csv = await res.text();
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
@@ -138,10 +139,11 @@ const MobileKpiView: React.FC<{
             const dataId = `${type}_${selectedMonth}`;
             await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
             setImportedData(rows);
-            alert(`Đồng bộ thành công ${rows.length} dòng dữ liệu.`);
+            
+            alert(`Đã lưu cấu hình và đồng bộ thành công ${rows.length} dòng dữ liệu.`);
             setActiveTab('eval');
         } catch (e) {
-            alert("Lỗi đồng bộ dữ liệu: " + (e as Error).message);
+            alert("Đã xảy ra lỗi: " + (e as Error).message);
         } finally {
             setIsProcessing(false);
         }
@@ -223,11 +225,15 @@ const MobileKpiView: React.FC<{
 
             {activeTab === 'eval' ? (
                 isLoadingData ? <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
-                (!config.mapping?.unitCodeCol && isAdmin) ? (
+                (!config.mapping?.unitCodeCol || importedData.length === 0) ? (
                     <div className="flex-1 h-[500px] flex flex-col items-center justify-center bg-slate-50 rounded-2xl text-center p-4">
                         <Database size={48} className="text-slate-300 mb-4"/>
                         <h4 className="font-black text-slate-600">Chưa có dữ liệu để hiển thị</h4>
-                        <p className="text-xs text-slate-400 mt-2">Vui lòng chuyển qua tab Cấu hình để thiết lập nguồn dữ liệu import.</p>
+                        {isAdmin ? (
+                            <p className="text-xs text-slate-400 mt-2">Vui lòng chuyển qua tab Cấu hình để thiết lập nguồn dữ liệu import.</p>
+                        ) : (
+                            <p className="text-xs text-slate-400 mt-2">Dữ liệu cho tháng này chưa được cập nhật. Vui lòng liên hệ quản trị viên.</p>
+                        )}
                     </div>
                 ) :
                 <div className="flex-1" style={{ height: `${chartHeight}px` }}>
@@ -278,8 +284,10 @@ const MobileKpiView: React.FC<{
                         </div>
                     )}
                     <div className="flex justify-end gap-2 pt-2 border-t">
-                        <button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1"><Save size={12}/> Lưu</button>
-                        <button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1"><Import size={12}/> Sync</button>
+                        <button onClick={handleSaveAndSync} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all">
+                            {isProcessing ? <Loader2 className="animate-spin" size={12}/> : <Save size={12}/>}
+                            Lưu & Đồng bộ
+                        </button>
                     </div>
                 </div>
             )}
