@@ -65,15 +65,17 @@ const MobileKpiView: React.FC<{
     }, [fetchData]);
 
     const chartData = useMemo(() => {
+        const unitsWithReportFlag = units.filter(u => u.includeInMobileReport);
         const unitOrder = [
             'VNPT Hạ Long', 'VNPT Uông Bí', 'VNPT Cẩm Phả', 'VNPT Tiên Yên',
             'VNPT Móng Cái', 'VNPT Bãi Cháy', 'VNPT Đông Triều', 'VNPT Vân Đồn - Cô Tô'
         ];
 
         const { unitCodeCol, targetCol, actualCol } = config.mapping || {};
+        
+        const targetUnits = unitsWithReportFlag.length > 0 ? unitsWithReportFlag : units.filter(unit => unitOrder.includes(unit.name));
 
-        const data = units
-            .filter(unit => unitOrder.includes(unit.name))
+        const data = targetUnits
             .map(unit => {
                 let target = 0;
                 let actual = 0;
@@ -236,7 +238,7 @@ const MobileKpiView: React.FC<{
                             <YAxis yAxisId="left" orientation="left" tick={{ fontSize: 9 }}/>
                             <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => `${value}%`} tick={{ fontSize: 9 }} domain={[0, 100]}/>
                             <Tooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0, 104, 255, 0.05)'}} />
-                            <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: '20px' }}/>
+                            <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: '50px' }} formatter={(value) => <span style={{ color: '#000' }}>{value}</span>}/>
                             
                             <Bar yAxisId="left" dataKey="target" fill={`${barColor}4D`} name="Kế hoạch" barSize={40}>
                                 <LabelList 
@@ -293,19 +295,75 @@ const MobileKpiView: React.FC<{
 
 const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
     const [chartHeight, setChartHeight] = useState(500);
+    const [isSyncingAll, setIsSyncingAll] = useState(false);
 
     const handleHeightChange = useCallback((newHeight: number) => {
-        // Add constraints to the height
         const clampedHeight = Math.max(300, Math.min(1200, newHeight));
         setChartHeight(clampedHeight);
     }, []);
 
+    const handleGlobalSync = async () => {
+        const month = prompt("Nhập tháng muốn cập nhật dữ liệu (định dạng YYYY-MM):", new Date().toISOString().slice(0, 7));
+        if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+            if (month) alert("Định dạng tháng không hợp lệ.");
+            return;
+        }
+
+        setIsSyncingAll(true);
+        try {
+            const types: ('subscribers' | 'revenue')[] = ['subscribers', 'revenue'];
+            let successCount = 0;
+            let errorMessages = [];
+
+            for (const type of types) {
+                const configId = `${type}_${month}`;
+                const config = await dbClient.getById('mobile_ops_configs', configId) as MobileOpsConfig;
+
+                if (config && config.url && config.mapping?.unitCodeCol) {
+                    try {
+                        let finalUrl = config.url.trim();
+                        if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+                        const res = await fetch(finalUrl);
+                        if (!res.ok) throw new Error(`Không tải được file cho ${type}`);
+                        const csv = await res.text();
+                        const wb = XLSX.read(csv, { type: 'string' });
+                        const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                        
+                        const dataId = `${type}_${month}`;
+                        await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+                        successCount++;
+                    } catch (e) {
+                        errorMessages.push(`Lỗi khi đồng bộ ${type}: ${(e as Error).message}`);
+                    }
+                } else {
+                    errorMessages.push(`Không tìm thấy cấu hình hợp lệ cho ${type} tháng ${month}.`);
+                }
+            }
+            
+            alert(`Hoàn tất!\n- Đồng bộ thành công: ${successCount}/${types.length} loại dữ liệu.\n- Tháng: ${month}\n${errorMessages.length > 0 ? `\nLỗi:\n- ${errorMessages.join('\n- ')}` : ''}`);
+            props.onRefresh();
+
+        } catch (e) {
+            alert("Đã có lỗi hệ thống xảy ra trong quá trình đồng bộ.");
+        } finally {
+            setIsSyncingAll(false);
+        }
+    };
+
     return (
         <div className="space-y-8 animate-fade-in">
-            <div className="flex justify-between items-center border-b pb-6">
+            <div className="flex flex-wrap gap-4 justify-between items-center border-b pb-6">
                 <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
                     <Smartphone className="text-blue-600" size={36} /> DASHBOARD CTHĐ DI ĐỘNG
                 </h2>
+                <button 
+                  onClick={handleGlobalSync} 
+                  disabled={isSyncingAll} 
+                  className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all disabled:bg-slate-400"
+                >
+                  {isSyncingAll ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                  Cập nhật dữ liệu
+                </button>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <MobileKpiView type="subscribers" title="Thuê bao PTM" icon={<Users size={16}/>} barColor="#0068FF" {...props} onRefreshParent={props.onRefresh} chartHeight={chartHeight} onHeightChange={handleHeightChange} />
