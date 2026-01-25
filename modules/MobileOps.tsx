@@ -4,7 +4,7 @@ import { User, Unit } from '../types';
 import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw, GripHorizontal } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
-import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend, Line } from 'recharts';
 
 interface MobileOpsConfig {
   id: string; 
@@ -230,13 +230,15 @@ const MobileKpiView: React.FC<{
                 ) :
                 <div className="flex-1" style={{ height: `${chartHeight}px` }}>
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData} margin={{ top: 40, right: 10, left: -20, bottom: 90 }}>
+                        <BarChart data={chartData} margin={{ top: 40, right: 30, left: -20, bottom: 90 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                             <XAxis dataKey="name" angle={-45} textAnchor="end" interval={0} tick={{ fontSize: 11, fontWeight: 'bold' }} />
-                            <YAxis tick={{ fontSize: 9 }}/>
+                            <YAxis yAxisId="left" orientation="left" tick={{ fontSize: 9 }}/>
+                            <YAxis yAxisId="right" orientation="right" tickFormatter={(value) => `${value}%`} tick={{ fontSize: 9 }} domain={[0, 100]}/>
                             <Tooltip content={<CustomTooltip />} cursor={{fill: 'rgba(0, 104, 255, 0.05)'}} />
+                            <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: '20px' }}/>
                             
-                            <Bar dataKey="target" fill={`${barColor}4D`} name="Kế hoạch" barSize={40}>
+                            <Bar yAxisId="left" dataKey="target" fill={`${barColor}4D`} name="Kế hoạch" barSize={40}>
                                 <LabelList 
                                     dataKey="percent" 
                                     position="top" 
@@ -245,9 +247,10 @@ const MobileKpiView: React.FC<{
                                     style={{ fill: '#1e293b', fontSize: '10px', fontWeight: 'bold' }} 
                                 />
                             </Bar>
-                            <Bar dataKey="actual" fill={barColor} name="Thực hiện" barSize={25}>
+                            <Bar yAxisId="left" dataKey="actual" fill={barColor} name="Thực hiện" barSize={25}>
                                 <LabelList dataKey="actual" content={<VerticalActualLabel />} />
                             </Bar>
+                             <Line yAxisId="right" type="monotone" dataKey="percent" name="Tỷ lệ" stroke="#e11d48" strokeWidth={2} />
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
