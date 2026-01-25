@@ -4,7 +4,7 @@ import { User, Unit } from '../types';
 import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
-import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList } from 'recharts';
+import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend } from 'recharts';
 
 interface MobileOpsConfig {
   id: string; 
@@ -82,6 +82,11 @@ const MobileKpiView: React.FC<{
             .sort((a, b) => (b?.percent || 0) - (a?.percent || 0));
     }, [units, importedData, config]);
 
+    // Cấu hình màu sắc dựa trên loại báo cáo
+    const barColors = type === 'revenue' 
+        ? { plan: '#FED7AA', actual: '#F97316', label: '#EA580C' } // Cam (Doanh thu)
+        : { plan: '#BAE6FD', actual: '#0068FF', label: '#0068FF' }; // Xanh (Thuê bao)
+
     const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
@@ -135,23 +140,10 @@ const MobileKpiView: React.FC<{
         }
     };
 
-    const CustomBarLabel: React.FC<any> = ({ x, y, width, value, payload }) => {
-        if (width < 30 || !payload) return null;
-        const formattedValue = (value !== null && value !== undefined) ? value.toLocaleString() : '';
-        const percentValue = (payload.percent !== null && payload.percent !== undefined) ? `${payload.percent}%` : '';
-        
-        return (
-            <g>
-                <text x={x + width / 2} y={y - 20} fill="#334155" textAnchor="middle" dy={-6} className="text-sm font-black">{formattedValue}</text>
-                <text x={x + width / 2} y={y - 8} fill="#0068FF" textAnchor="middle" dy={6} className="text-xs font-bold">{percentValue}</text>
-            </g>
-        );
-    };
-
     return (
         <div className="bg-white p-8 rounded-[40px] shadow-sm border space-y-6">
             <div className="flex justify-between items-center">
-                <h3 className="text-xl font-black text-slate-800 tracking-tighter uppercase">{title}</h3>
+                <h3 className={`text-xl font-black tracking-tighter uppercase ${type === 'revenue' ? 'text-orange-600' : 'text-slate-800'}`}>{title}</h3>
                 <div className="flex items-center gap-4">
                     <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-4 py-2 font-bold text-xs bg-slate-50 outline-none"/>
                     {isAdmin && (
@@ -167,12 +159,18 @@ const MobileKpiView: React.FC<{
                 isLoadingData ? <div className="h-[500px] flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
                 <div className="h-[500px]">
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData} margin={{ top: 50, right: 20, left: 0, bottom: 5 }}>
+                        <BarChart data={chartData} margin={{ top: 30, right: 0, left: 0, bottom: 5 }}>
+                            <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.5} />
                             <XAxis dataKey="name" interval={0} tick={{ fontSize: 10 }} />
-                            <YAxis />
-                            <Tooltip formatter={(value: number, name: string) => [value.toLocaleString(), name === 'actual' ? 'Thực hiện' : name === 'target' ? 'Kế hoạch' : 'Tỷ lệ']}/>
-                            <Bar dataKey="actual" fill="#0068FF" name="Thực hiện">
-                                <LabelList dataKey="actual" content={<CustomBarLabel />} />
+                            <YAxis yAxisId="left" />
+                            <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip formatter={(value: number, name: string) => [value.toLocaleString(), name === 'actual' ? 'Thực hiện' : name === 'target' ? 'Kế hoạch' : name]}/>
+                            <Legend verticalAlign="top" align="center" wrapperStyle={{ paddingBottom: '20px' }}/>
+                            <Bar yAxisId="left" dataKey="target" fill={barColors.plan} name="Kế hoạch">
+                                <LabelList dataKey="target" position="top" formatter={(val: number) => val > 0 ? val.toLocaleString() : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#94a3b8' }} />
+                            </Bar>
+                            <Bar yAxisId="left" dataKey="actual" fill={barColors.actual} name="Thực hiện">
+                                <LabelList dataKey="percent" position="top" formatter={(val: number) => val > 0 ? `${val}%` : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: barColors.label }} />
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
@@ -219,7 +217,7 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
                 </h2>
                 <div className="flex bg-slate-100 p-1.5 rounded-2xl border">
                     <button onClick={() => setActiveSubModule('subscribers')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${activeSubModule === 'subscribers' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Users size={16}/> Thuê bao PTM</button>
-                    <button onClick={() => setActiveSubModule('revenue')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${activeSubModule === 'revenue' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={16}/> Doanh thu PTM</button>
+                    <button onClick={() => setActiveSubModule('revenue')} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${activeSubModule === 'revenue' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={16}/> Doanh thu PTM</button>
                 </div>
             </div>
             <div>
