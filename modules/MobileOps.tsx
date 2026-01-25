@@ -51,53 +51,24 @@ const MobileKpiView: React.FC<{
         const dataId = `${type}_${selectedMonth}`;
         
         try {
-            const configData = await dbClient.getById('mobile_ops_configs', configId) as MobileOpsConfig | null;
+            // The reliable flow: Fetch both config and data directly from the database.
+            // The chart will only render if BOTH are present.
+            const [configData, dataResult] = await Promise.all([
+                dbClient.getById('mobile_ops_configs', configId),
+                dbClient.getById('mobile_ops_data', dataId)
+            ]);
+
             setConfig(configData || { type, period: selectedMonth, url: '', mapping: {} });
-    
-            let dataResult = await dbClient.getById('mobile_ops_data', dataId) as { data: any[] } | null;
-    
-            const hasValidConfig = configData?.url && configData.mapping?.unitCodeCol && configData.mapping.targetCol && configData.mapping.actualCol;
-            const isDataMissing = !dataResult || !dataResult.data || dataResult.data.length === 0;
-    
-            if (hasValidConfig && isDataMissing) {
-                console.log(`Auto-fetching data for ${type}-${selectedMonth} as data is missing.`);
-                try {
-                    let finalUrl = configData.url!.trim();
-                    if (finalUrl.includes('/edit')) {
-                        finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-                    }
-                    const res = await fetch(finalUrl);
-                    if (!res.ok) throw new Error("Không thể tải file từ Google Sheet. Vui lòng kiểm tra lại URL và quyền truy cập.");
-                    
-                    const csv = await res.text();
-                    const wb = XLSX.read(csv, { type: 'string' });
-                    const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-                    
-                    if (rows.length > 0) {
-                        await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
-                        setImportedData(rows);
-                        console.log(`Auto-fetch successful. Synced ${rows.length} rows.`);
-                    } else {
-                        setImportedData([]);
-                    }
-                } catch (e) {
-                    console.error("Auto-fetch failed:", e);
-                    if (isAdmin) {
-                        alert(`Tự động đồng bộ dữ liệu thất bại: ${(e as Error).message}`);
-                    }
-                    setImportedData([]);
-                }
-            } else {
-                setImportedData(dataResult?.data || []);
-            }
+            setImportedData((dataResult as { data: any[] } | null)?.data || []);
+
         } catch (error) {
-            console.error("Error during initial data load:", error);
+            console.error("Error fetching mobile ops data from DB:", error);
             setConfig({ type, period: selectedMonth, url: '', mapping: {} });
             setImportedData([]);
         } finally {
             setIsLoadingData(false);
         }
-    }, [type, selectedMonth, isAdmin]);
+    }, [type, selectedMonth]);
 
     useEffect(() => {
         fetchData();
@@ -163,9 +134,11 @@ const MobileKpiView: React.FC<{
         }
         setIsProcessing(true);
         try {
+            // Step 1: Save the configuration to the database.
             const configId = `${type}_${selectedMonth}`;
             await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type, period: selectedMonth });
 
+            // Step 2: Fetch data from Google Sheet.
             let finalUrl = config.url.trim();
             if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
@@ -175,8 +148,11 @@ const MobileKpiView: React.FC<{
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
+            // Step 3: Save the fetched data to the database.
             const dataId = `${type}_${selectedMonth}`;
             await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+
+            // Step 4: Update local state to show the chart immediately for the admin.
             setImportedData(rows);
             
             alert(`Đã lưu cấu hình và đồng bộ thành công ${rows.length} dòng dữ liệu.`);
@@ -269,7 +245,7 @@ const MobileKpiView: React.FC<{
                         <Database size={48} className="text-slate-300 mb-4"/>
                         <h4 className="font-black text-slate-600">Chưa có dữ liệu để hiển thị</h4>
                         {isAdmin ? (
-                            <p className="text-xs text-slate-400 mt-2">Vui lòng chuyển qua tab Cấu hình để thiết lập nguồn dữ liệu import.</p>
+                            <p className="text-xs text-slate-400 mt-2">Vui lòng chuyển qua tab Cấu hình để thiết lập và đồng bộ dữ liệu.</p>
                         ) : (
                             <p className="text-xs text-slate-400 mt-2">Dữ liệu cho tháng này chưa được cập nhật. Vui lòng liên hệ quản trị viên.</p>
                         )}
