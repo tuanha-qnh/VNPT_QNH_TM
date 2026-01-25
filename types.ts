@@ -17,7 +17,8 @@ export interface Unit {
   managerIds?: string[];
   address?: string;
   phone?: string;
-  includeInMobileReport?: boolean;
+  includeInPtmReport?: boolean;
+  includeInBroadbandReport?: boolean;
 }
 
 export interface User {

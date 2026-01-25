@@ -11,7 +11,6 @@ interface MobileOpsConfig {
   type: 'subscribers' | 'revenue';
   period: string; // YYYY-MM
   url: string;
-  // FIX: Made mapping properties optional to allow for empty mapping object during initialization.
   mapping?: {
     unitCodeCol?: string;
     targetCol?: string;
@@ -52,55 +51,60 @@ const MobileKpiView: React.FC<{
         const dataId = `${type}_${selectedMonth}`;
         
         try {
-            const [configData, importedResult] = await Promise.all([
-                dbClient.getById('mobile_ops_configs', configId),
-                dbClient.getById('mobile_ops_data', dataId)
-            ]) as [MobileOpsConfig | null, { data: any[] } | null];
-
-            // Auto-sync logic: If config exists but data is missing in DB, fetch from source.
-            if (configData?.url && configData.mapping?.unitCodeCol && (!importedResult || !importedResult.data || importedResult.data.length === 0)) {
-                console.log(`Auto-syncing data for ${type} - ${selectedMonth} because config exists but data is missing.`);
+            const configData = await dbClient.getById('mobile_ops_configs', configId) as MobileOpsConfig | null;
+            setConfig(configData || { type, period: selectedMonth, url: '', mapping: {} });
+    
+            let dataResult = await dbClient.getById('mobile_ops_data', dataId) as { data: any[] } | null;
+    
+            const hasValidConfig = configData?.url && configData.mapping?.unitCodeCol && configData.mapping.targetCol && configData.mapping.actualCol;
+            const isDataMissing = !dataResult || !dataResult.data || dataResult.data.length === 0;
+    
+            if (hasValidConfig && isDataMissing) {
+                console.log(`Auto-fetching data for ${type}-${selectedMonth} as data is missing.`);
                 try {
-                    let finalUrl = configData.url.trim();
+                    let finalUrl = configData.url!.trim();
                     if (finalUrl.includes('/edit')) {
                         finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
                     }
                     const res = await fetch(finalUrl);
-                    if (!res.ok) throw new Error("Failed to fetch from Google Sheet URL during auto-sync.");
+                    if (!res.ok) throw new Error("Không thể tải file từ Google Sheet. Vui lòng kiểm tra lại URL và quyền truy cập.");
                     
                     const csv = await res.text();
                     const wb = XLSX.read(csv, { type: 'string' });
                     const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
                     
-                    await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
-                    
-                    setConfig(configData);
-                    setImportedData(rows);
+                    if (rows.length > 0) {
+                        await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+                        setImportedData(rows);
+                        console.log(`Auto-fetch successful. Synced ${rows.length} rows.`);
+                    } else {
+                        setImportedData([]);
+                    }
                 } catch (e) {
-                    console.error("Auto-sync failed:", e);
-                    // If auto-sync fails, proceed with empty data so user sees the "no data" message.
-                    setConfig(configData || { type, period: selectedMonth, url: '', mapping: {} });
+                    console.error("Auto-fetch failed:", e);
+                    if (isAdmin) {
+                        alert(`Tự động đồng bộ dữ liệu thất bại: ${(e as Error).message}`);
+                    }
                     setImportedData([]);
                 }
             } else {
-                setConfig(configData || { type, period: selectedMonth, url: '', mapping: {} });
-                setImportedData(importedResult?.data || []);
+                setImportedData(dataResult?.data || []);
             }
         } catch (error) {
-            console.error("Error fetching mobile ops data:", error);
+            console.error("Error during initial data load:", error);
             setConfig({ type, period: selectedMonth, url: '', mapping: {} });
             setImportedData([]);
         } finally {
             setIsLoadingData(false);
         }
-    }, [type, selectedMonth]);
+    }, [type, selectedMonth, isAdmin]);
 
     useEffect(() => {
         fetchData();
     }, [fetchData]);
 
     const chartData = useMemo(() => {
-        const unitsWithReportFlag = units.filter(u => u.includeInMobileReport);
+        const unitsWithReportFlag = units.filter(u => u.includeInPtmReport);
         const unitOrder = [
             'VNPT Hạ Long', 'VNPT Uông Bí', 'VNPT Cẩm Phả', 'VNPT Tiên Yên',
             'VNPT Móng Cái', 'VNPT Bãi Cháy', 'VNPT Đông Triều', 'VNPT Vân Đồn - Cô Tô'
