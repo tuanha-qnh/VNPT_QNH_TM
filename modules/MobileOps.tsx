@@ -114,8 +114,8 @@ const MobileKpiView: React.FC<{
 
     // Cấu hình màu sắc
     const barColors = type === 'revenue' 
-        ? { percent: '#FEF08A', actual: '#F97316', label: '#000000' } // Cam (Doanh thu) - Percent Vàng
-        : { percent: '#FEF08A', actual: '#0068FF', label: '#000000' }; // Xanh (Thuê bao) - Percent Vàng (Thay xanh nhạt thành vàng nhạt)
+        ? { percent: '#3B82F6', actual: '#F97316', label: '#000000' } // Doanh thu: Percent Xanh dương (#3B82F6), Actual Cam
+        : { percent: '#EAB308', actual: '#0068FF', label: '#000000' }; // Thuê bao: Percent Vàng đậm (#EAB308), Actual Xanh
 
     const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
@@ -199,7 +199,12 @@ const MobileKpiView: React.FC<{
                                     name === 'percent' ? `${value}%` : value.toLocaleString(), 
                                     name === 'actual' ? 'Thực hiện' : name === 'target' ? 'Kế hoạch' : 'Tỷ lệ TH'
                                 ]}/>
-                                <Legend verticalAlign="top" align="center" wrapperStyle={{ paddingBottom: '10px', color: '#000000', fontWeight: 'bold', fontSize: '11px' }}/>
+                                <Legend 
+                                    verticalAlign="top" 
+                                    align="center" 
+                                    wrapperStyle={{ paddingBottom: '10px', fontWeight: 'bold', fontSize: '11px' }}
+                                    formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}
+                                />
                                 
                                 {/* Cột Tỷ lệ thực hiện - Dùng trục phải */}
                                 <Bar yAxisId="right" dataKey="percent" fill={barColors.percent} name="Tỷ lệ thực hiện (%)">
