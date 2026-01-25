@@ -22,58 +22,51 @@ interface MobileOpsProps {
   currentUser: User;
   units: Unit[];
   onRefresh: () => void;
+  mobileOpsConfigs: any[];
+  mobileOpsData: any[];
 }
 
-const MobileKpiView: React.FC<{
-    type: 'subscribers' | 'revenue',
-    title: string,
-    icon: React.ReactNode,
-    barColor: string,
-    currentUser: User,
-    units: Unit[],
+interface MobileKpiViewProps {
+    type: 'subscribers' | 'revenue';
+    title: string;
+    icon: React.ReactNode;
+    barColor: string;
+    currentUser: User;
+    units: Unit[];
     onRefreshParent: () => void;
     chartHeight: number;
     onHeightChange: (newHeight: number) => void;
-    reloadTrigger: number;
-}> = ({ type, title, icon, barColor, currentUser, units, chartHeight, onHeightChange, reloadTrigger }) => {
+    mobileOpsConfigs: any[];
+    mobileOpsData: any[];
+}
+
+const MobileKpiView: React.FC<MobileKpiViewProps> = ({ 
+    type, title, icon, barColor, currentUser, units, 
+    chartHeight, onHeightChange, onRefreshParent, 
+    mobileOpsConfigs, mobileOpsData 
+}) => {
     const [activeTab, setActiveTab] = useState('eval');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-    const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
-    const [importedData, setImportedData] = useState<any[]>([]);
-    const [isLoadingData, setIsLoadingData] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
     const [sheetColumns, setSheetColumns] = useState<string[]>([]);
 
     const isAdmin = currentUser.username === 'admin';
 
-    const fetchData = useCallback(async () => {
-        setIsLoadingData(true);
-        const configId = `${type}_${selectedMonth}`;
-        const dataId = `${type}_${selectedMonth}`;
-        
-        try {
-            // The reliable flow: Fetch both config and data directly from the database.
-            // The chart will only render if BOTH are present.
-            const [configData, dataResult] = await Promise.all([
-                dbClient.getById('mobile_ops_configs', configId),
-                dbClient.getById('mobile_ops_data', dataId)
-            ]);
-
-            setConfig(configData || { type, period: selectedMonth, url: '', mapping: {} });
-            setImportedData((dataResult as { data: any[] } | null)?.data || []);
-
-        } catch (error) {
-            console.error("Error fetching mobile ops data from DB:", error);
-            setConfig({ type, period: selectedMonth, url: '', mapping: {} });
-            setImportedData([]);
-        } finally {
-            setIsLoadingData(false);
-        }
-    }, [type, selectedMonth]);
+    // FIX: Replaced useMemo with useState and useEffect to allow config modification.
+    const [config, setConfig] = useState<any>({});
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData, reloadTrigger]);
+        const configId = `${type}_${selectedMonth}`;
+        const foundConfig = mobileOpsConfigs.find(c => c.id === configId) || { type, period: selectedMonth, url: '', mapping: {} };
+        setConfig(foundConfig);
+    }, [mobileOpsConfigs, type, selectedMonth]);
+
+    const importedData = useMemo(() => {
+        const dataId = `${type}_${selectedMonth}`;
+        const dataRecord = mobileOpsData.find(d => d.id === dataId);
+        return dataRecord?.data || [];
+    }, [mobileOpsData, type, selectedMonth]);
+
 
     const chartData = useMemo(() => {
         const unitsWithReportFlag = units.filter(u => u.includeInPtmReport);
@@ -135,11 +128,9 @@ const MobileKpiView: React.FC<{
         }
         setIsProcessing(true);
         try {
-            // Step 1: Save the configuration to the database.
             const configId = `${type}_${selectedMonth}`;
             await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type, period: selectedMonth });
 
-            // Step 2: Fetch data from Google Sheet.
             let finalUrl = config.url.trim();
             if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
@@ -149,15 +140,12 @@ const MobileKpiView: React.FC<{
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
-            // Step 3: Save the fetched data to the database.
             const dataId = `${type}_${selectedMonth}`;
             await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
-
-            // Step 4: Update local state to show the chart immediately for the admin.
-            setImportedData(rows);
             
             alert(`Đã lưu cấu hình và đồng bộ thành công ${rows.length} dòng dữ liệu.`);
             setActiveTab('eval');
+            onRefreshParent();
         } catch (e) {
             alert("Đã xảy ra lỗi: " + (e as Error).message);
         } finally {
@@ -240,7 +228,6 @@ const MobileKpiView: React.FC<{
             </div>
 
             {activeTab === 'eval' ? (
-                isLoadingData ? <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
                 (!config.mapping?.unitCodeCol || importedData.length === 0) ? (
                     <div className="flex-1 h-[500px] flex flex-col items-center justify-center bg-slate-50 rounded-2xl text-center p-4">
                         <Database size={48} className="text-slate-300 mb-4"/>
@@ -318,18 +305,14 @@ const MobileKpiView: React.FC<{
 };
 
 const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
+    const { currentUser, onRefresh } = props;
     const [chartHeight, setChartHeight] = useState(500);
     const [isSyncingAll, setIsSyncingAll] = useState(false);
-    const [reloadTrigger, setReloadTrigger] = useState(0);
 
     const handleHeightChange = useCallback((newHeight: number) => {
         const clampedHeight = Math.max(300, Math.min(1200, newHeight));
         setChartHeight(clampedHeight);
     }, []);
-
-    const handleManualReload = () => {
-        setReloadTrigger(prev => prev + 1);
-    };
 
     const handleGlobalSync = async () => {
         const month = prompt("Nhập tháng muốn cập nhật dữ liệu (định dạng YYYY-MM):", new Date().toISOString().slice(0, 7));
@@ -370,8 +353,7 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
             }
             
             alert(`Hoàn tất!\n- Đồng bộ thành công: ${successCount}/${types.length} loại dữ liệu.\n- Tháng: ${month}\n${errorMessages.length > 0 ? `\nLỗi:\n- ${errorMessages.join('\n- ')}` : ''}`);
-            props.onRefresh();
-
+            onRefresh();
         } catch (e) {
             alert("Đã có lỗi hệ thống xảy ra trong quá trình đồng bộ.");
         } finally {
@@ -385,29 +367,38 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
                 <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
                     <Smartphone className="text-blue-600" size={36} /> DASHBOARD CTHĐ DI ĐỘNG
                 </h2>
-                <div className="flex items-center gap-2">
+                {currentUser.username === 'admin' && (
                     <button 
-                      onClick={handleManualReload} 
-                      className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-green-100 flex items-center gap-2 hover:bg-green-700 transition-all"
+                      onClick={handleGlobalSync} 
+                      disabled={isSyncingAll} 
+                      className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all disabled:bg-slate-400"
                     >
-                      <RefreshCw size={16}/>
-                      Nạp dữ liệu
+                      {isSyncingAll ? <Loader2 className="animate-spin" size={16}/> : <Import size={16}/>}
+                      Đồng bộ từ Sheet
                     </button>
-                    {props.currentUser.username === 'admin' && (
-                        <button 
-                          onClick={handleGlobalSync} 
-                          disabled={isSyncingAll} 
-                          className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all disabled:bg-slate-400"
-                        >
-                          {isSyncingAll ? <Loader2 className="animate-spin" size={16}/> : <Import size={16}/>}
-                          Đồng bộ từ Sheet
-                        </button>
-                    )}
-                </div>
+                )}
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <MobileKpiView type="subscribers" title="Thuê bao PTM" icon={<Users size={16}/>} barColor="#0068FF" {...props} onRefreshParent={props.onRefresh} chartHeight={chartHeight} onHeightChange={handleHeightChange} reloadTrigger={reloadTrigger} />
-                <MobileKpiView type="revenue" title="Doanh thu PTM" icon={<TrendingUp size={16}/>} barColor="#f97316" {...props} onRefreshParent={props.onRefresh} chartHeight={chartHeight} onHeightChange={handleHeightChange} reloadTrigger={reloadTrigger} />
+                <MobileKpiView 
+                    type="subscribers" 
+                    title="Thuê bao PTM" 
+                    icon={<Users size={16}/>} 
+                    barColor="#0068FF" 
+                    {...props} 
+                    onRefreshParent={onRefresh} 
+                    chartHeight={chartHeight} 
+                    onHeightChange={handleHeightChange} 
+                />
+                <MobileKpiView 
+                    type="revenue" 
+                    title="Doanh thu PTM" 
+                    icon={<TrendingUp size={16}/>} 
+                    barColor="#f97316" 
+                    {...props} 
+                    onRefreshParent={onRefresh} 
+                    chartHeight={chartHeight} 
+                    onHeightChange={handleHeightChange}
+                />
             </div>
         </div>
     );

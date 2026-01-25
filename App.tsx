@@ -32,6 +32,8 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [kpis, setKpis] = useState<any[]>([]);
   const [kpiDefinitions, setKpiDefinitions] = useState<KPIDefinition[]>([]);
+  const [mobileOpsConfigs, setMobileOpsConfigs] = useState<any[]>([]);
+  const [mobileOpsData, setMobileOpsData] = useState<any[]>([]);
   
   useEffect(() => {
     localStorage.setItem('vnpt_active_module', activeModule);
@@ -43,13 +45,16 @@ const App: React.FC = () => {
       
       try {
           const [
-              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult
+              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult,
+              mobileOpsConfigsData, mobileOpsDataResult
           ] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
               dbClient.getAll('kpis'),
-              dbClient.getAll('kpi_definitions')
+              dbClient.getAll('kpi_definitions'),
+              dbClient.getAll('mobile_ops_configs'),
+              dbClient.getAll('mobile_ops_data')
           ]);
 
           let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
@@ -72,6 +77,8 @@ const App: React.FC = () => {
           setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
           setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
+          setMobileOpsConfigs(mobileOpsConfigsData || []);
+          setMobileOpsData(mobileOpsDataResult || []);
           
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
@@ -164,8 +171,7 @@ const App: React.FC = () => {
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
-      // FIX: Removed unused `users` prop which was causing a type error.
-      case 'mobile-ops': return <MobileOps currentUser={currentUser!} units={units} onRefresh={() => fetchInitialData(true)} />;
+      case 'mobile-ops': return <MobileOps currentUser={currentUser!} units={units} onRefresh={() => fetchInitialData(true)} mobileOpsConfigs={mobileOpsConfigs} mobileOpsData={mobileOpsData} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
