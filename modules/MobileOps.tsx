@@ -807,6 +807,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
     // Custom Tooltip for Chart
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
+            const total = payload[0].payload.total || 0;
             return (
                 <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[200px] z-50">
                     <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
@@ -816,6 +817,9 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                         const diff = entry.payload[diffKey];
                         const sign = diff > 0 ? '+' : '';
                         
+                        // Percent Calculation
+                        const percentage = total > 0 ? ((entry.value / total) * 100).toFixed(1) : '0';
+
                         // Evaluation Logic
                         let evalText = "Ổn định";
                         let evalColor = "text-slate-500";
@@ -836,7 +840,9 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                             <div key={index} className="mb-2 last:mb-0">
                                 <div className="flex justify-between items-center gap-4">
                                     <span style={{ color: entry.color }} className="font-bold">{entry.name}:</span>
-                                    <span className="font-black text-slate-700">{entry.value} NS</span>
+                                    <span className="font-black text-slate-700">
+                                        {entry.value} NS <span className="text-[10px] text-slate-500 font-normal">({percentage}%)</span>
+                                    </span>
                                 </div>
                                 <div className="flex justify-between items-center text-[10px] pl-2 mt-0.5">
                                     <span className="text-slate-400">Biến động:</span>
@@ -873,29 +879,32 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 {activeTab === 'eval' ? (
                      isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
-                        <div className="lg:col-span-2 h-full">
-                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
-                                    <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
-                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
-                                    <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
-                                    <Legend iconSize={16} wrapperStyle={{fontSize: '14px', fontWeight: 'normal', paddingBottom: '20px', color: '#000000'}} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}/>
-                                    
-                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#e0412b" barSize={25}>
-                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
-                                    </Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#f4ff4b" barSize={25}>
-                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
-                                    </Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#6395ff" barSize={25}>
-                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
-                                    </Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#63ff6e" barSize={25}>
-                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', false)} />
-                                    </Bar>
-                                </BarChart>
-                             </ResponsiveContainer>
+                        <div className="lg:col-span-2 h-full flex flex-col">
+                             <h4 className="text-sm font-bold text-center text-slate-500 mb-2 uppercase tracking-wider">Phân nhóm NVKD theo mức doanh thu PTM</h4>
+                             <div className="flex-1 min-h-0">
+                                 <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 10, right: 30, left: 20, bottom: 5 }}>
+                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
+                                        <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
+                                        <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
+                                        <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
+                                        <Legend iconSize={16} wrapperStyle={{fontSize: '14px', fontWeight: 'normal', paddingBottom: '20px', color: '#000000'}} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}/>
+                                        
+                                        <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#e0412b" barSize={25}>
+                                            <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
+                                        </Bar>
+                                        <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#f4ff4b" barSize={25}>
+                                            <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
+                                        </Bar>
+                                        <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#6395ff" barSize={25}>
+                                            <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
+                                        </Bar>
+                                        <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#63ff6e" barSize={25}>
+                                            <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', false)} />
+                                        </Bar>
+                                    </BarChart>
+                                 </ResponsiveContainer>
+                             </div>
                         </div>
                         <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
                             <div className="flex items-center justify-between mb-4">
