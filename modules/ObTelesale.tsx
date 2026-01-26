@@ -191,17 +191,13 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
              const r_ckd_t = Number(row[m.rev_ckd_t] || 0); const r_ckd_a = Number(row[m.rev_ckd_a] || 0);
              const r_pkg_t = Number(row[m.rev_pkg_t] || 0); const r_pkg_a = Number(row[m.rev_pkg_a] || 0);
              
-             // Metrics
-             const ckn_ex = Number(row[m.ckn_exec] || 0); const ckn_su = Number(row[m.ckn_success] || 0);
-             const ckd_ex = Number(row[m.ckd_exec] || 0); const ckd_su = Number(row[m.ckd_success] || 0);
-             const pkg_ex = Number(row[m.pkg_exec] || 0); const pkg_su = Number(row[m.pkg_success] || 0);
+             // Metrics - Direct Rates from CSV
+             const ckn_rate = Number(row[m.ckn_rate] || 0);
+             const ckd_rate = Number(row[m.ckd_rate] || 0);
+             const pkg_rate = Number(row[m.pkg_rate] || 0);
 
              const ready_total = Number(row[m.ready_time_total] || 0);
              const ready_avg = Number(row[m.ready_time_avg] || 0);
-
-             const ckn_rate = ckn_ex > 0 ? (ckn_su / ckn_ex) * 100 : 0;
-             const ckd_rate = ckd_ex > 0 ? (ckd_su / ckd_ex) * 100 : 0;
-             const pkg_rate = pkg_ex > 0 ? (pkg_su / pkg_ex) * 100 : 0;
 
              const total_rev_t = r_ckn_t + r_ckd_t + r_pkg_t;
              const total_rev_a = r_ckn_a + r_ckd_a + r_pkg_a;
@@ -571,57 +567,91 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
                                 <div className="space-y-6">
                                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Ánh xạ dữ liệu ({configTab === 'general' ? 'Tổng hợp' : 'ĐTV'})</label>
                                     
-                                    {configTab === 'agent' && (
-                                         <div className="bg-white p-4 rounded-xl border space-y-4">
-                                            <h5 className="text-xs font-bold text-slate-800 uppercase border-b pb-2 flex items-center gap-2"><UserIcon size={14}/> Thông tin chung</h5>
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                                <MappingSelect label="Tên Điện thoại viên" field="agent_name" type="agent" />
-                                                <MappingSelect label="Tổng Ready Time" field="ready_time_total" type="agent" />
-                                                <MappingSelect label="BQ Ready Time" field="ready_time_avg" type="agent" />
+                                    {configTab === 'agent' ? (
+                                        <>
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <h5 className="text-xs font-bold text-slate-800 uppercase border-b pb-2 flex items-center gap-2"><UserIcon size={14}/> Thông tin chung</h5>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <MappingSelect label="Tên Điện thoại viên" field="agent_name" type="agent" />
+                                                    <MappingSelect label="Tổng Ready Time" field="ready_time_total" type="agent" />
+                                                    <MappingSelect label="BQ Ready Time" field="ready_time_avg" type="agent" />
+                                                </div>
                                             </div>
-                                        </div>
+                                            
+                                            {/* REVENUE MAPPING (Agent) */}
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <h5 className="text-xs font-bold text-blue-600 uppercase border-b pb-2">I. Chỉ tiêu Doanh thu</h5>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <MappingSelect label="CKN - Kế hoạch (VNĐ)" field="rev_ckn_t" type="agent" />
+                                                    <MappingSelect label="CKN - Thực hiện (VNĐ)" field="rev_ckn_a" type="agent" />
+                                                    <MappingSelect label="CKD - Kế hoạch (VNĐ)" field="rev_ckd_t" type="agent" />
+                                                    <MappingSelect label="CKD - Thực hiện (VNĐ)" field="rev_ckd_a" type="agent" />
+                                                    <MappingSelect label="Bán gói - Kế hoạch (VNĐ)" field="rev_pkg_t" type="agent" />
+                                                    <MappingSelect label="Bán gói - Thực hiện (VNĐ)" field="rev_pkg_a" type="agent" />
+                                                </div>
+                                            </div>
+
+                                            {/* PERFORMANCE MAPPING (Agent) - Simplified as requested */}
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <h5 className="text-xs font-bold text-green-600 uppercase border-b pb-2">II. Hiệu suất & Chuyển đổi (SL Thuê bao)</h5>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <MappingSelect label="Tỷ lệ Gia hạn CKN (%)" field="ckn_rate" type="agent" />
+                                                    </div>
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <MappingSelect label="Tỷ lệ Gia hạn CKD (%)" field="ckd_rate" type="agent" />
+                                                    </div>
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <MappingSelect label="Tỷ lệ Bán gói (%)" field="pkg_rate" type="agent" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        // GENERAL CONFIG
+                                        <>
+                                            {/* REVENUE MAPPING */}
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <h5 className="text-xs font-bold text-blue-600 uppercase border-b pb-2">I. Chỉ tiêu Doanh thu</h5>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <MappingSelect label="CKN - Kế hoạch (VNĐ)" field="rev_ckn_t" type={configTab} />
+                                                    <MappingSelect label="CKN - Thực hiện (VNĐ)" field="rev_ckn_a" type={configTab} />
+                                                    <MappingSelect label="CKD - Kế hoạch (VNĐ)" field="rev_ckd_t" type={configTab} />
+                                                    <MappingSelect label="CKD - Thực hiện (VNĐ)" field="rev_ckd_a" type={configTab} />
+                                                    <MappingSelect label="Bán gói - Kế hoạch (VNĐ)" field="rev_pkg_t" type={configTab} />
+                                                    <MappingSelect label="Bán gói - Thực hiện (VNĐ)" field="rev_pkg_a" type={configTab} />
+                                                </div>
+                                            </div>
+
+                                            {/* PERFORMANCE MAPPING (General) - Keeps existing complex structure */}
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <h5 className="text-xs font-bold text-green-600 uppercase border-b pb-2">II. Hiệu suất & Chuyển đổi (SL Thuê bao)</h5>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                    {/* CKN Group */}
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <div className="text-[10px] font-black text-slate-500 uppercase text-center">Gia hạn CKN</div>
+                                                        <MappingSelect label="SL Giao (Assign)" field="ckn_assign" type={configTab} />
+                                                        <MappingSelect label="SL Gọi (Executed)" field="ckn_exec" type={configTab} />
+                                                        <MappingSelect label="SL Thành công" field="ckn_success" type={configTab} />
+                                                    </div>
+                                                    {/* CKD Group */}
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <div className="text-[10px] font-black text-slate-500 uppercase text-center">Gia hạn CKD</div>
+                                                        <MappingSelect label="SL Giao (Assign)" field="ckd_assign" type={configTab} />
+                                                        <MappingSelect label="SL Gọi (Executed)" field="ckd_exec" type={configTab} />
+                                                        <MappingSelect label="SL Thành công" field="ckd_success" type={configTab} />
+                                                    </div>
+                                                    {/* Package Group */}
+                                                    <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
+                                                        <div className="text-[10px] font-black text-slate-500 uppercase text-center">Bán Gói Cước</div>
+                                                        <MappingSelect label="SL Giao (Assign)" field="pkg_assign" type={configTab} />
+                                                        <MappingSelect label="SL Gọi (Executed)" field="pkg_exec" type={configTab} />
+                                                        <MappingSelect label="SL Thành công" field="pkg_success" type={configTab} />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </>
                                     )}
-
-                                    {/* REVENUE MAPPING */}
-                                    <div className="bg-white p-4 rounded-xl border space-y-4">
-                                        <h5 className="text-xs font-bold text-blue-600 uppercase border-b pb-2">I. Chỉ tiêu Doanh thu</h5>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <MappingSelect label="CKN - Kế hoạch (VNĐ)" field="rev_ckn_t" type={configTab} />
-                                            <MappingSelect label="CKN - Thực hiện (VNĐ)" field="rev_ckn_a" type={configTab} />
-                                            <MappingSelect label="CKD - Kế hoạch (VNĐ)" field="rev_ckd_t" type={configTab} />
-                                            <MappingSelect label="CKD - Thực hiện (VNĐ)" field="rev_ckd_a" type={configTab} />
-                                            <MappingSelect label="Bán gói - Kế hoạch (VNĐ)" field="rev_pkg_t" type={configTab} />
-                                            <MappingSelect label="Bán gói - Thực hiện (VNĐ)" field="rev_pkg_a" type={configTab} />
-                                        </div>
-                                    </div>
-
-                                    {/* PERFORMANCE MAPPING */}
-                                    <div className="bg-white p-4 rounded-xl border space-y-4">
-                                        <h5 className="text-xs font-bold text-green-600 uppercase border-b pb-2">II. Hiệu suất & Chuyển đổi (SL Thuê bao)</h5>
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            {/* CKN Group */}
-                                            <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
-                                                <div className="text-[10px] font-black text-slate-500 uppercase text-center">Gia hạn CKN</div>
-                                                <MappingSelect label="SL Giao (Assign)" field="ckn_assign" type={configTab} />
-                                                <MappingSelect label="SL Gọi (Executed)" field="ckn_exec" type={configTab} />
-                                                <MappingSelect label="SL Thành công" field="ckn_success" type={configTab} />
-                                            </div>
-                                            {/* CKD Group */}
-                                            <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
-                                                <div className="text-[10px] font-black text-slate-500 uppercase text-center">Gia hạn CKD</div>
-                                                <MappingSelect label="SL Giao (Assign)" field="ckd_assign" type={configTab} />
-                                                <MappingSelect label="SL Gọi (Executed)" field="ckd_exec" type={configTab} />
-                                                <MappingSelect label="SL Thành công" field="ckd_success" type={configTab} />
-                                            </div>
-                                            {/* Package Group */}
-                                            <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
-                                                <div className="text-[10px] font-black text-slate-500 uppercase text-center">Bán Gói Cước</div>
-                                                <MappingSelect label="SL Giao (Assign)" field="pkg_assign" type={configTab} />
-                                                <MappingSelect label="SL Gọi (Executed)" field="pkg_exec" type={configTab} />
-                                                <MappingSelect label="SL Thành công" field="pkg_success" type={configTab} />
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
                              )}
 
