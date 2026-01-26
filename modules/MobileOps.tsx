@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
-import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter, CheckCircle2, AlertTriangle, ShieldCheck, Target, Zap } from 'lucide-react';
+import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend, ReferenceLine, Cell } from 'recharts';
@@ -15,23 +15,14 @@ interface MobileOpsConfig {
     unitCodeCol?: string;
     targetCol?: string; 
     actualCol?: string; 
-    
-    // Productivity Columns
     g1Col?: string;
     g2Col?: string; 
     g3Col?: string; 
     g4Col?: string; 
-    
     g1DiffCol?: string; 
     g2DiffCol?: string;
     g3DiffCol?: string;
     g4DiffCol?: string;
-
-    g1PercentCol?: string; // New: Cột tỷ trọng G1 từ file
-    g2PercentCol?: string; // New: Cột tỷ trọng G2 từ file
-    g3PercentCol?: string; // New: Cột tỷ trọng G3 từ file
-    g4PercentCol?: string; // New: Cột tỷ trọng G4 từ file
-
     // Quality Fields
     psslCol?: string;
     subProdCol?: string;
@@ -160,26 +151,16 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
         });
 
     }, [units, importedData, config]);
-
-    // Calculate Summary for Analysis Box
-    const summary = useMemo(() => {
+    
+    // Tự động phân tích dữ liệu
+    const analysisText = useMemo(() => {
         if (chartData.length === 0) return null;
-        const totalTarget = chartData.reduce((sum, item) => sum + item.target, 0);
-        const totalActual = chartData.reduce((sum, item) => sum + item.actual, 0);
-        const totalPercent = totalTarget > 0 ? Math.round((totalActual / totalTarget) * 100) : 0;
         
-        const passedUnits = chartData.filter(d => d.percent >= 100);
-        const failedUnits = chartData.filter(d => d.percent < 100);
-        const bestUnit = [...chartData].sort((a,b) => b.percent - a.percent)[0];
+        const excellent = chartData.filter(d => d.percent >= 100).map(d => d.name);
+        const near = chartData.filter(d => d.percent >= 90 && d.percent < 100).map(d => d.name);
+        const bad = chartData.filter(d => d.percent < 90).map(d => d.name);
         
-        return {
-            totalTarget,
-            totalActual,
-            totalPercent,
-            passedUnits,
-            failedUnits,
-            bestUnit
-        };
+        return { excellent, near, bad };
     }, [chartData]);
 
     const barColors = type === 'revenue' 
@@ -310,7 +291,7 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
             <div className="flex-1 min-h-[350px]">
                 {activeTab === 'eval' ? (
                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
-                    <div className="h-full w-full flex flex-col">
+                    <div className="h-full w-full flex flex-col gap-4">
                         <div className="flex-1 min-h-0">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={chartData} margin={{ top: 30, right: 0, left: 0, bottom: 5 }}>
@@ -349,51 +330,38 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
-                        
-                        {summary && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 h-[140px] shrink-0">
-                                <div className="bg-green-50 p-4 rounded-2xl border border-green-100 overflow-y-auto custom-scrollbar relative">
-                                    <div className="absolute top-0 right-0 p-2 opacity-10"><Target size={40} className="text-green-600"/></div>
-                                    <div className="flex items-center gap-2 mb-2 text-green-700 font-black text-xs uppercase border-b border-green-200 pb-2">
-                                        <CheckCircle2 size={14}/> Điểm tích cực
-                                    </div>
-                                    <div className="text-[11px] font-medium text-slate-700 space-y-2 text-justify">
-                                        <p>
-                                            Toàn tỉnh đạt <span className="font-black text-green-600">{summary.totalPercent}%</span> kế hoạch ({summary.totalActual.toLocaleString()}/{summary.totalTarget.toLocaleString()}).
-                                        </p>
-                                        <p>
-                                            Đơn vị dẫn đầu: <span className="font-black text-slate-800">{summary.bestUnit?.name}</span> với tỷ lệ <span className="font-black text-green-600">{summary.bestUnit?.percent}%</span>.
-                                        </p>
-                                        {summary.passedUnits.length > 0 && (
-                                            <p>
-                                                Các đơn vị hoàn thành kế hoạch: <span className="font-bold text-slate-600">{summary.passedUnits.map(u => u.name).join(', ')}</span>.
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="bg-orange-50 p-4 rounded-2xl border border-orange-100 overflow-y-auto custom-scrollbar relative">
-                                    <div className="absolute top-0 right-0 p-2 opacity-10"><AlertTriangle size={40} className="text-orange-600"/></div>
-                                    <div className="flex items-center gap-2 mb-2 text-orange-700 font-black text-xs uppercase border-b border-orange-200 pb-2">
-                                        <TrendingDown size={14}/> Cần cải thiện
-                                    </div>
-                                    <div className="text-[11px] font-medium text-slate-700 space-y-2 text-justify">
-                                        {summary.failedUnits.length > 0 ? (
-                                            <>
-                                                <p>
-                                                    Có <span className="font-black text-red-500">{summary.failedUnits.length}</span> đơn vị chưa đạt chỉ tiêu.
-                                                </p>
-                                                <p>
-                                                    Danh sách: <span className="font-bold text-slate-600">{summary.failedUnits.map(u => u.name).join(', ')}</span>.
-                                                </p>
-                                                <p>
-                                                   Tổng khối lượng còn thiếu: <span className="font-black text-red-500">{(summary.totalTarget - summary.totalActual > 0 ? summary.totalTarget - summary.totalActual : 0).toLocaleString()}</span> {type === 'revenue' ? 'Tr.đ' : 'thuê bao'}.
-                                                </p>
-                                            </>
-                                        ) : (
-                                            <p className="text-green-600 font-bold italic">Tuyệt vời! Tất cả các đơn vị đều đã hoàn thành kế hoạch được giao.</p>
-                                        )}
-                                    </div>
-                                </div>
+                        {analysisText && (
+                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mt-2 text-xs md:text-sm">
+                                <h4 className="font-bold text-slate-700 mb-2 flex items-center gap-2 uppercase tracking-wide"><Briefcase size={16}/> Chuyên gia đánh giá ({selectedMonth}):</h4>
+                                <ul className="space-y-1.5 list-none text-slate-600 leading-relaxed text-justify">
+                                    {analysisText.excellent.length > 0 && (
+                                        <li className="flex items-start gap-2">
+                                            <CheckCircle2 size={16} className="text-green-600 mt-0.5 shrink-0"/>
+                                            <span>
+                                                <strong className="text-green-700">Làm rất tốt:</strong> Các đơn vị <strong className="text-slate-800">{analysisText.excellent.join(', ')}</strong> đã hoàn thành xuất sắc kế hoạch, tiếp tục duy trì đà tăng trưởng.
+                                            </span>
+                                        </li>
+                                    )}
+                                    {analysisText.near.length > 0 && (
+                                        <li className="flex items-start gap-2">
+                                            <TrendingUp size={16} className="text-blue-600 mt-0.5 shrink-0"/>
+                                            <span>
+                                                <strong className="text-blue-700">Sắp về đích:</strong> Các đơn vị <strong className="text-slate-800">{analysisText.near.join(', ')}</strong> đang bám sát mục tiêu, cần tập trung đẩy mạnh thêm một chút là hoàn thành kế hoạch.
+                                            </span>
+                                        </li>
+                                    )}
+                                    {analysisText.bad.length > 0 && (
+                                        <li className="flex items-start gap-2">
+                                            <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0"/>
+                                            <span>
+                                                <strong className="text-red-600">Cần cố gắng:</strong> Các đơn vị <strong className="text-slate-800">{analysisText.bad.join(', ')}</strong> hiện đang thấp hơn mức kỳ vọng, cần có giải pháp đột phá để cải thiện kết quả.
+                                            </span>
+                                        </li>
+                                    )}
+                                    {chartData.length > 0 && analysisText.excellent.length === 0 && analysisText.near.length === 0 && (
+                                        <li className="italic text-slate-500">Chưa có đơn vị nào đạt mức hoàn thành kế hoạch trong tháng này.</li>
+                                    )}
+                                </ul>
                             </div>
                         )}
                     </div>
@@ -475,7 +443,7 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
         else evalText += `\n- Tất cả các đơn vị đều đạt mục tiêu PSSL. `;
         
         if (failedSub) evalText += `\n- Về năng suất PTTB, các đơn vị cần cải thiện (dưới ${TARGET_SUB} TB): ${failedSub}. `;
-        if (failedRev) evalText += `\n- Về năng suất Doanh thu, các đơn vị cần cải thiện (dưới ${TARGET_REV} Tr.đ gồm: ${failedRev}.`;
+        if (failedRev) evalText += `\n- Về năng suất Doanh thu, các đơn vị chưa đạt mốc ${TARGET_REV} Tr.đ gồm: ${failedRev}.`;
 
         return { psslData, subData, revData, evaluation: evalText };
 
@@ -537,11 +505,8 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
                                              <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 9, fontWeight: 'bold' }} interval={0} />
                                              <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
                                              <ReferenceLine x={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Target: ${TARGET_PSSL}%`, fontSize: 8, fill: 'red' }} />
-                                             <Bar dataKey="pssl" barSize={15}>
+                                             <Bar dataKey="pssl" barSize={15} fill="#a664f3">
                                                 <LabelList dataKey="pssl" position="right" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
-                                                {processedData.psslData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={entry.pssl >= TARGET_PSSL ? '#22c55e' : '#ef4444'} />
-                                                ))}
                                              </Bar>
                                          </BarChart>
                                      </ResponsiveContainer>
@@ -668,22 +633,17 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
 
     const { chartData, analysis } = useMemo(() => {
         if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
-        const { 
-            unitCodeCol, 
-            g1Col, g2Col, g3Col, g4Col, 
-            g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol,
-            g1PercentCol, g2PercentCol, g3PercentCol, g4PercentCol // Lấy thêm các cột cấu hình tỷ trọng
-        } = config.mapping;
+        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
         
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
                 const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
                 
-                const g1 = Number(row?.[g1Col!] || 0);
-                const g2 = Number(row?.[g2Col!] || 0);
-                const g3 = Number(row?.[g3Col!] || 0);
-                const g4 = Number(row?.[g4Col!] || 0);
+                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
+                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
+                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
+                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
                 
                 const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
                 const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
@@ -691,22 +651,6 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
 
                 const total = g1 + g2 + g3 + g4;
-
-                // Lấy giá trị tỷ trọng từ file nếu có, nếu không thì tự tính (fallback)
-                // Lưu ý: Nếu trong file excel là "25%", thư viện xlsx có thể đọc là string "25%" hoặc number 0.25 tùy format.
-                // Ở đây ta giả định người dùng nhập số (ví dụ 25) hoặc chuỗi có thể parse được.
-                const parsePercent = (val: any, fallback: number) => {
-                    if (val === undefined || val === null || val === '') return fallback;
-                    const num = parseFloat(String(val).replace('%', ''));
-                    // Nếu số nhỏ < 1 (ví dụ 0.25) thì nhân 100, nếu lớn hơn 1 (25) thì giữ nguyên.
-                    // Tuy nhiên để an toàn và nhất quán với yêu cầu "lấy từ file", ta sẽ lấy nguyên giá trị số.
-                    return isNaN(num) ? fallback : num;
-                };
-
-                const g1Percent = g1PercentCol ? parsePercent(row?.[g1PercentCol], total > 0 ? (g1 / total) * 100 : 0) : (total > 0 ? (g1 / total) * 100 : 0);
-                const g2Percent = g2PercentCol ? parsePercent(row?.[g2PercentCol], total > 0 ? (g2 / total) * 100 : 0) : (total > 0 ? (g2 / total) * 100 : 0);
-                const g3Percent = g3PercentCol ? parsePercent(row?.[g3PercentCol], total > 0 ? (g3 / total) * 100 : 0) : (total > 0 ? (g3 / total) * 100 : 0);
-                const g4Percent = g4PercentCol ? parsePercent(row?.[g4PercentCol], total > 0 ? (g4 / total) * 100 : 0) : (total > 0 ? (g4 / total) * 100 : 0);
                 
                 return {
                     name: unit.name,
@@ -714,8 +658,9 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                     id: unit.id,
                     g1, g2, g3, g4, 
                     g1Diff, g2Diff, g3Diff, g4Diff,
-                    g1Percent, g2Percent, g3Percent, g4Percent, // Pass pre-calculated percents to data
-                    total
+                    total,
+                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
+                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
                 };
             })
             .filter(d => d.total > 0);
@@ -752,6 +697,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             if (targetUnit) {
                 scopeName = targetUnit.name.toUpperCase();
                 trends = { g1: targetUnit.g1Diff, g2: targetUnit.g2Diff, g3: targetUnit.g3Diff, g4: targetUnit.g4Diff };
+                // Local stats (not strictly needed for single unit view but keeping structure)
                 mostImproved = { name: targetUnit.name, val: targetUnit.g4Diff };
                 mostDeclined = { name: targetUnit.name, val: targetUnit.g1Diff };
                 bestUnit = { name: targetUnit.name, val: targetUnit.g4Percent };
@@ -840,27 +786,16 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
     };
     
     // Custom label renderer for chart
-    // Modified to use pre-calculated percent from payload
-    const renderLabel = (props: any, diffKey: string, percentKey: string, isDark: boolean) => {
-         const { x, y, width, height, value } = props;
-         const payload = props.payload;
-         
+    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
+         const { x, y, width, height, value, payload } = props;
          if (!value) return null;
-
-         // Get percent directly from payload (mapped from sheet)
-         const percent = payload?.[percentKey] || 0;
          
-         // Logic: Show Value and Percentage (e.g. 15 (25%))
-         // If percent is 0.25 (decimal), format it. If it's 25 (integer), keep it.
-         // Simple heuristic: if < 1 and > 0, multiply by 100.
-         let displayPercent = percent;
-         if (percent > 0 && percent < 1) {
-             displayPercent = Math.round(percent * 100);
-         } else {
-             displayPercent = Math.round(percent);
-         }
-
-         const text = (width > 40) ? `${value} (${displayPercent}%)` : `${value}`;
+         const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
+         const sign = diff > 0 ? '+' : '';
+         const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
+         
+         // Aggressively show diff if width allows (> 30px), otherwise just value
+         const text = (width > 30) ? `${value} ${diffText}` : `${value}`;
 
          return (
              <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
@@ -945,19 +880,19 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
                                     <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
                                     <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
-                                    <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
+                                    <Legend iconSize={16} wrapperStyle={{fontSize: '14px', fontWeight: 'normal', paddingBottom: '20px', color: '#000000'}} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}/>
                                     
-                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
-                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', 'g1Percent', true)} />
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#e0412b" barSize={25}>
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
-                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', 'g2Percent', false)} />
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#f4ff4b" barSize={25}>
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
                                     </Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
-                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', 'g3Percent', true)} />
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#6395ff" barSize={25}>
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
-                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', 'g4Percent', true)} />
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#63ff6e" barSize={25}>
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', false)} />
                                     </Bar>
                                 </BarChart>
                              </ResponsiveContainer>
@@ -1058,15 +993,6 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
-                                </div>
-                            </div>
-                            <div className="space-y-2 col-span-3">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-orange-600">4. Ánh xạ Tỷ trọng (%)</label>
-                                <div className="grid grid-cols-4 gap-4 bg-orange-50 p-4 rounded-xl border border-orange-100">
-                                    <MappingSelect label="Tỷ trọng G1 (%)" columns={sheetColumns} value={config.mapping?.g1PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1PercentCol: v}})} />
-                                    <MappingSelect label="Tỷ trọng G2 (%)" columns={sheetColumns} value={config.mapping?.g2PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2PercentCol: v}})} />
-                                    <MappingSelect label="Tỷ trọng G3 (%)" columns={sheetColumns} value={config.mapping?.g3PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3PercentCol: v}})} />
-                                    <MappingSelect label="Tỷ trọng G4 (%)" columns={sheetColumns} value={config.mapping?.g4PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4PercentCol: v}})} />
                                 </div>
                             </div>
                         </div>
