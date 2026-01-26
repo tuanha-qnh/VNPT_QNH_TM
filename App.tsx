@@ -9,6 +9,7 @@ import Settings from './modules/Settings';
 import PersonalTasks from './modules/PersonalTasks';
 import Reports from './modules/Reports';
 import MobileOps from './modules/MobileOps';
+import ObTelesale from './modules/ObTelesale';
 import { dbClient } from './utils/firebaseClient'; 
 import { Task, Unit, User, Role, KPIDefinition } from './types';
 import { Search, LogOut, Loader2, Database, ShieldAlert, RefreshCw, Key, ShieldCheck, Save } from 'lucide-react';
@@ -172,6 +173,7 @@ const App: React.FC = () => {
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
       case 'mobile-ops': return <MobileOps currentUser={currentUser!} units={units} systemSettings={systemSettings} onRefresh={() => fetchInitialData(true)} />;
+      case 'ob-telesale': return <ObTelesale currentUser={currentUser!} systemSettings={systemSettings} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;

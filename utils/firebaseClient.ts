@@ -1,6 +1,19 @@
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, updateDoc, query, where, orderBy, getDoc } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  getDocs, 
+  deleteDoc, 
+  updateDoc, 
+  query, 
+  where, 
+  orderBy, 
+  getDoc,
+  enableIndexedDbPersistence
+} from 'firebase/firestore';
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -17,47 +30,87 @@ let db: any = null;
 try {
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
+    
+    // Enable offline persistence to handle connectivity issues
+    enableIndexedDbPersistence(db).catch((err) => {
+        if (err.code == 'failed-precondition') {
+             console.warn('Persistence failed: Multiple tabs open.');
+        } else if (err.code == 'unimplemented') {
+             console.warn('Persistence failed: Browser not supported.');
+        }
+    });
 } catch (e) {
-    console.error("Firebase init failed");
+    console.error("Firebase init failed", e);
 }
 
 export const dbClient = {
     async getAll(colName: string) {
         if (!db) return [];
-        const querySnapshot = await getDocs(collection(db, colName));
-        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        try {
+            const querySnapshot = await getDocs(collection(db, colName));
+            return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error(`Error getting all from ${colName}:`, error);
+            // Return empty array to allow app to continue rendering even if offline/failed
+            return [];
+        }
     },
     
     async getById(colName: string, id: string) {
         if (!db) return null;
-        const docRef = doc(db, colName, id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-            return { id: docSnap.id, ...docSnap.data() };
-        } else {
+        try {
+            const docRef = doc(db, colName, id);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                return { id: docSnap.id, ...docSnap.data() };
+            } else {
+                return null;
+            }
+        } catch (error) {
+            console.error(`Error getting by id ${colName}/${id}:`, error);
             return null;
         }
     },
 
     async getByFilter(colName: string, field: string, value: any) {
         if (!db) return [];
-        const q = query(collection(db, colName), where(field, "==", value));
-        const querySnapshot = await getDocs(q);
-        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        try {
+            const q = query(collection(db, colName), where(field, "==", value));
+            const querySnapshot = await getDocs(q);
+            return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error(`Error filtering ${colName}:`, error);
+            return [];
+        }
     },
 
     async upsert(colName: string, id: string, data: any) {
         if (!db) return;
-        await setDoc(doc(db, colName, id), { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+        try {
+            await setDoc(doc(db, colName, id), { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+        } catch (error) {
+            console.error(`Error upserting ${colName}/${id}:`, error);
+            throw error;
+        }
     },
 
     async update(colName: string, id: string, data: any) {
         if (!db) return;
-        await updateDoc(doc(db, colName, id), data);
+        try {
+            await updateDoc(doc(db, colName, id), data);
+        } catch (error) {
+            console.error(`Error updating ${colName}/${id}:`, error);
+            throw error;
+        }
     },
 
     async delete(colName: string, id: string) {
         if (!db) return;
-        await deleteDoc(doc(db, colName, id));
+        try {
+            await deleteDoc(doc(db, colName, id));
+        } catch (error) {
+            console.error(`Error deleting ${colName}/${id}:`, error);
+            throw error;
+        }
     }
 };
