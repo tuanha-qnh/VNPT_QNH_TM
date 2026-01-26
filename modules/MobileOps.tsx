@@ -1,10 +1,12 @@
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { User, Unit } from '../types';
-import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter, CheckCircle2, AlertTriangle, ShieldCheck, FileText, Printer, Calendar } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend, ReferenceLine, Cell } from 'recharts';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface MobileOpsConfig {
   id: string; 
@@ -91,6 +93,38 @@ const MappingSelect: React.FC<MappingSelectProps> = ({label, columns, value, onC
     </div>
 );
 
+// --- HELPER FUNCTIONS ---
+const calculateEvaluation = (data: any[], type: 'subscribers' | 'revenue', title: string) => {
+    if (data.length === 0) return { overview: "Chưa có dữ liệu.", details: "" };
+
+    const totalTarget = data.reduce((sum, item) => sum + item.target, 0);
+    const totalActual = data.reduce((sum, item) => sum + item.actual, 0);
+    const totalPercent = totalTarget > 0 ? (totalActual / totalTarget) * 100 : 0;
+
+    const sortedByPercent = [...data].sort((a, b) => b.percent - a.percent);
+    const bestUnit = sortedByPercent[0];
+    const worstUnit = sortedByPercent[sortedByPercent.length - 1];
+    
+    const notAchieved = data.filter(d => d.percent < 100);
+    const achieved = data.filter(d => d.percent >= 100);
+
+    let overview = `Tính đến thời điểm hiện tại, tổng ${title.toLowerCase()} toàn tỉnh đạt ${totalActual.toLocaleString()} / ${totalTarget.toLocaleString()} (đạt ${totalPercent.toFixed(1)}% kế hoạch). `;
+    
+    if (totalPercent >= 100) overview += "Kết quả chung rất tích cực, hoàn thành vượt mức chỉ tiêu giao.";
+    else if (totalPercent >= 90) overview += "Kết quả chung ở mức khá, cần đẩy mạnh hơn để về đích.";
+    else overview += "Kết quả chung còn thấp so với tiến độ, cần các giải pháp đột phá.";
+
+    let details = `- Đơn vị dẫn đầu: ${bestUnit.name} (${bestUnit.percent}%). `;
+    if (notAchieved.length === 0) {
+        details += `\n- Tuyệt vời! 100% các đơn vị đã hoàn thành kế hoạch.`;
+    } else {
+        details += `\n- Có ${notAchieved.length} đơn vị chưa đạt kế hoạch, thấp nhất là ${worstUnit.name} (${worstUnit.percent}%).`;
+        if (achieved.length > 0) details += `\n- Các đơn vị đã về đích: ${achieved.map(u => u.name).join(', ')}.`;
+    }
+
+    return { overview, details };
+};
+
 const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser, units, systemSettings, onRefreshParent }) => {
     const [activeTab, setActiveTab] = useState('eval');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -151,6 +185,8 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
         });
 
     }, [units, importedData, config]);
+
+    const evaluation = useMemo(() => calculateEvaluation(chartData, type, title), [chartData, type, title]);
 
     const barColors = type === 'revenue' 
         ? { percent: '#3B82F6', actual: '#F97316', label: '#000000' } 
@@ -280,48 +316,640 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
             <div className="flex-1 min-h-[350px]">
                 {activeTab === 'eval' ? (
                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
-                    <div className="h-full w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={chartData} margin={{ top: 30, right: 0, left: 0, bottom: 5 }}>
-                                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.5} />
-                                <XAxis dataKey="name" interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} angle={-45} textAnchor="end" height={80} />
-                                <YAxis yAxisId="left" tick={{fontSize: 10}} />
-                                <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tickFormatter={(v) => `${v}%`} tick={{fontSize: 10}} />
-                                
-                                <Tooltip content={({ active, payload, label }) => {
-                                    if (active && payload && payload.length) {
-                                        const data = payload[0].payload;
-                                        return (
-                                            <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[180px] z-50">
-                                                <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
-                                                <div className="flex justify-between items-center gap-4 mb-1">
-                                                    <span className="text-slate-500 font-bold">Kế hoạch giao:</span>
-                                                    <span className="font-black text-slate-700">{data.target.toLocaleString()}</span>
+                    <div className="h-full w-full flex flex-col">
+                        <div className="flex-1">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartData} margin={{ top: 30, right: 0, left: 0, bottom: 5 }}>
+                                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.5} />
+                                    <XAxis dataKey="name" interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} angle={-45} textAnchor="end" height={80} />
+                                    <YAxis yAxisId="left" tick={{fontSize: 10}} />
+                                    <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tickFormatter={(v) => `${v}%`} tick={{fontSize: 10}} />
+                                    
+                                    <Tooltip content={({ active, payload, label }) => {
+                                        if (active && payload && payload.length) {
+                                            const data = payload[0].payload;
+                                            return (
+                                                <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[180px] z-50">
+                                                    <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
+                                                    <div className="flex justify-between items-center gap-4 mb-1">
+                                                        <span className="text-slate-500 font-bold">Kế hoạch giao:</span>
+                                                        <span className="font-black text-slate-700">{data.target.toLocaleString()}</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center gap-4 mb-1">
+                                                        <span className="text-slate-500 font-bold">Kết quả thực hiện:</span>
+                                                        <span className={`font-black ${type === 'revenue' ? 'text-orange-500' : 'text-blue-600'}`}>{data.actual.toLocaleString()}</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center gap-4">
+                                                        <span className="text-slate-500 font-bold">Tỷ lệ thực hiện:</span>
+                                                        <span className={`font-black ${type === 'revenue' ? 'text-blue-600' : 'text-yellow-600'}`}>{data.percent}%</span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex justify-between items-center gap-4 mb-1">
-                                                    <span className="text-slate-500 font-bold">Kết quả thực hiện:</span>
-                                                    <span className={`font-black ${type === 'revenue' ? 'text-orange-500' : 'text-blue-600'}`}>{data.actual.toLocaleString()}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center gap-4">
-                                                    <span className="text-slate-500 font-bold">Tỷ lệ thực hiện:</span>
-                                                    <span className={`font-black ${type === 'revenue' ? 'text-blue-600' : 'text-yellow-600'}`}>{data.percent}%</span>
-                                                </div>
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                }} cursor={{fill: 'transparent'}} />
+                                            );
+                                        }
+                                        return null;
+                                    }} cursor={{fill: 'transparent'}} />
 
-                                <Legend verticalAlign="top" align="center" wrapperStyle={{ paddingBottom: '10px', fontWeight: 'bold', fontSize: '11px' }} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>} />
-                                <Bar yAxisId="right" dataKey="percent" fill={barColors.percent} name="Tỷ lệ thực hiện (%)"><LabelList dataKey="percent" position="top" formatter={(val: number) => val > 0 ? `${val}%` : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
-                                <Bar yAxisId="left" dataKey="actual" fill={barColors.actual} name="Kết quả thực hiện"><LabelList dataKey="actual" position="top" formatter={(val: number) => val > 0 ? val.toLocaleString() : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
+                                    <Legend verticalAlign="top" align="center" wrapperStyle={{ paddingBottom: '10px', fontWeight: 'bold', fontSize: '11px' }} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>} />
+                                    <Bar yAxisId="right" dataKey="percent" fill={barColors.percent} name="Tỷ lệ thực hiện (%)"><LabelList dataKey="percent" position="top" formatter={(val: number) => val > 0 ? `${val}%` : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
+                                    <Bar yAxisId="left" dataKey="actual" fill={barColors.actual} name="Kết quả thực hiện"><LabelList dataKey="actual" position="top" formatter={(val: number) => val > 0 ? val.toLocaleString() : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        {/* Auto Evaluation Box */}
+                        <div className={`mt-4 p-4 rounded-2xl border text-xs leading-relaxed ${type === 'revenue' ? 'bg-orange-50 border-orange-100' : 'bg-blue-50 border-blue-100'}`}>
+                            <div className="flex items-center gap-2 font-black uppercase mb-1">
+                                <TrendingUp size={14} className={type === 'revenue' ? 'text-orange-600' : 'text-blue-600'}/>
+                                <span className={type === 'revenue' ? 'text-orange-800' : 'text-blue-800'}>Đánh giá tổng quan</span>
+                            </div>
+                            <p className="font-bold text-slate-700 text-justify">{evaluation.overview}</p>
+                            <p className="font-medium text-slate-600 mt-2 text-justify whitespace-pre-line">{evaluation.details}</p>
+                        </div>
                     </div>
                 ) : (
                     <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
                         <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
                         {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label><div className="grid grid-cols-1 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột Kế hoạch" columns={sheetColumns} value={config.mapping?.targetCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, targetCol: v}})} /><MappingSelect label="Cột Thực hiện" columns={sheetColumns} value={config.mapping?.actualCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, actualCol: v}})} /></div></div>)}
+                        <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const AggregateReportView: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+    const [reportPeriod, setReportPeriod] = useState(() => {
+        const today = new Date();
+        const weekNum = Math.ceil(today.getDate() / 7);
+        return { type: 'week', month: today.toISOString().slice(0, 7), week: weekNum };
+    });
+    const [reportType, setReportType] = useState<'general' | 'detailed'>('general');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const reportRef = useRef<HTMLDivElement>(null);
+
+    const handleExportPDF = async () => {
+        if (!reportRef.current) return;
+        setIsGenerating(true);
+        
+        try {
+            const canvas = await html2canvas(reportRef.current, { scale: 2 }); // Scale 2 for better quality
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = pdf.internal.pageSize.getHeight();
+            const imgWidth = canvas.width;
+            const imgHeight = canvas.height;
+            const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+            const imgX = (pdfWidth - imgWidth * ratio) / 2;
+            const imgY = 20;
+
+            pdf.setFontSize(18);
+            pdf.setTextColor(0, 75, 181); // VNPT Blue
+            pdf.text("BÁO CÁO CHƯƠNG TRÌNH HÀNH ĐỘNG", pdfWidth / 2, 15, { align: 'center' });
+            
+            pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+            
+            // Add Footer
+            pdf.setFontSize(10);
+            pdf.setTextColor(150);
+            pdf.text(`Xuất bản ngày ${new Date().toLocaleDateString('vi-VN')} - Hệ thống điều hành VNPT QN`, pdfWidth / 2, pdfHeight - 10, { align: 'center' });
+
+            pdf.save(`BC_CTHD_${reportPeriod.month}_W${reportPeriod.week}.pdf`);
+        } catch (e) {
+            console.error(e);
+            alert("Lỗi khi tạo PDF.");
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[120] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-5xl h-[90vh] rounded-[32px] flex flex-col shadow-2xl overflow-hidden animate-zoom-in">
+                <div className="p-6 border-b bg-slate-50 flex justify-between items-center shrink-0">
+                    <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><FileText className="text-blue-600"/> Tổng hợp báo cáo</h3>
+                    <button onClick={onClose} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><TrendingDown size={24} className="rotate-45"/></button>
+                </div>
+                
+                <div className="p-6 border-b flex flex-wrap gap-6 items-center shrink-0 bg-white">
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs font-black text-slate-500 uppercase">Kỳ báo cáo:</label>
+                        <select className="border-2 rounded-xl p-2 text-sm font-bold" value={reportPeriod.type} onChange={e => setReportPeriod({...reportPeriod, type: e.target.value})}>
+                            <option value="week">Theo Tuần</option>
+                            <option value="month">Theo Tháng</option>
+                        </select>
+                        <input type="month" className="border-2 rounded-xl p-2 text-sm font-bold" value={reportPeriod.month} onChange={e => setReportPeriod({...reportPeriod, month: e.target.value})}/>
+                        {reportPeriod.type === 'week' && (
+                            <select className="border-2 rounded-xl p-2 text-sm font-bold" value={reportPeriod.week} onChange={e => setReportPeriod({...reportPeriod, week: Number(e.target.value)})}>
+                                {[1, 2, 3, 4, 5].map(w => <option key={w} value={w}>Tuần {w}</option>)}
+                            </select>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs font-black text-slate-500 uppercase">Loại báo cáo:</label>
+                        <div className="flex bg-slate-100 p-1 rounded-xl">
+                            <button onClick={() => setReportType('general')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${reportType === 'general' ? 'bg-white text-blue-600 shadow' : 'text-slate-500'}`}>Tổng quát</button>
+                            <button onClick={() => setReportType('detailed')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${reportType === 'detailed' ? 'bg-white text-blue-600 shadow' : 'text-slate-500'}`}>Chi tiết</button>
+                        </div>
+                    </div>
+                    <button onClick={handleExportPDF} disabled={isGenerating} className="ml-auto bg-blue-600 text-white px-6 py-2 rounded-xl font-bold text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-blue-700 transition-all">
+                        {isGenerating ? <Loader2 className="animate-spin" size={16}/> : <Printer size={16}/>} Xuất PDF
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto bg-slate-100 p-8 flex justify-center">
+                    {/* A4 REPORT PREVIEW CONTAINER */}
+                    <div ref={reportRef} className="bg-white w-[210mm] min-h-[297mm] shadow-xl p-[20mm] space-y-8 relative">
+                        <div className="text-center border-b-2 border-blue-600 pb-4 mb-6">
+                            <h1 className="text-2xl font-black text-blue-800 uppercase tracking-tighter">BÁO CÁO ĐÁNH GIÁ CHƯƠNG TRÌNH HÀNH ĐỘNG</h1>
+                            <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-widest">
+                                {reportPeriod.type === 'week' ? `Tuần ${reportPeriod.week} - Tháng ${reportPeriod.month.split('-')[1]}` : `Tháng ${reportPeriod.month.split('-')[1]}`} / {reportPeriod.month.split('-')[0]}
+                            </p>
+                        </div>
+
+                        {/* SECTION 1: OVERVIEW */}
+                        <div className="space-y-4">
+                            <h2 className="text-lg font-black text-slate-800 uppercase border-l-4 border-blue-500 pl-3">I. ĐÁNH GIÁ TỔNG QUAN</h2>
+                            <div className="text-sm text-justify leading-relaxed font-medium text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                <p>Trong kỳ báo cáo vừa qua, tình hình thực hiện các chỉ tiêu chính (PTTB, Doanh thu, Năng suất) ghi nhận nhiều chuyển biến. 
+                                Một số đơn vị đã bứt phá mạnh mẽ, tuy nhiên vẫn còn tồn tại các đơn vị chưa đạt tiến độ cam kết.</p>
+                                <p className="mt-2 font-bold italic text-blue-600">
+                                    * Lưu ý: Số liệu được trích xuất từ hệ thống Dashboard tại thời điểm báo cáo. Đề nghị các đơn vị rà soát và cập nhật kịp thời.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* SECTION 2: MOBILE OPS (Placeholder for captured Charts) */}
+                        <div className="space-y-4">
+                            <h2 className="text-lg font-black text-slate-800 uppercase border-l-4 border-orange-500 pl-3">II. KẾT QUẢ KINH DOANH DI ĐỘNG</h2>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="h-40 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex items-center justify-center text-xs text-slate-400 font-bold uppercase">
+                                    [Biểu đồ PTTB sẽ hiển thị tại đây khi xuất PDF]
+                                </div>
+                                <div className="h-40 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex items-center justify-center text-xs text-slate-400 font-bold uppercase">
+                                    [Biểu đồ Doanh thu sẽ hiển thị tại đây khi xuất PDF]
+                                </div>
+                            </div>
+                            <div className="text-sm font-medium text-slate-700 space-y-1">
+                                <p>- <span className="font-bold">PTTB:</span> Các đơn vị khối TTVT đang duy trì đà tăng trưởng tốt.</p>
+                                <p>- <span className="font-bold">Doanh thu:</span> Cần tập trung các gói cước Data chu kỳ dài để đảm bảo hoàn thành kế hoạch tháng.</p>
+                            </div>
+                        </div>
+
+                        {/* SECTION 3: PRODUCTIVITY & QUALITY */}
+                        <div className="space-y-4">
+                            <h2 className="text-lg font-black text-slate-800 uppercase border-l-4 border-green-500 pl-3">III. NĂNG SUẤT & CHẤT LƯỢNG</h2>
+                            <div className="text-sm font-medium text-slate-700 text-justify">
+                                <p>Cơ cấu nhân sự đang có sự dịch chuyển tích cực sang nhóm năng suất cao (G4). 
+                                Tuy nhiên, tỷ lệ nhân viên PSSL tại một số đơn vị vẫn cần cải thiện để đạt mức tiêu chuẩn {'>='} 90%.</p>
+                            </div>
+                            {reportType === 'detailed' && (
+                                <table className="w-full text-xs border mt-2">
+                                    <thead className="bg-slate-100 font-bold">
+                                        <tr><th className="p-2 border">Đơn vị</th><th className="p-2 border text-center">Xếp hạng</th><th className="p-2 border text-center">Nhận xét</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td className="p-2 border">VNPT Hạ Long</td><td className="p-2 border text-center font-bold text-green-600">A</td><td className="p-2 border italic">Dẫn đầu về năng suất PTTB.</td></tr>
+                                        <tr><td className="p-2 border">VNPT Uông Bí</td><td className="p-2 border text-center font-bold text-blue-600">B</td><td className="p-2 border italic">Chất lượng PSSL ổn định.</td></tr>
+                                        <tr><td className="p-2 border">VNPT Cẩm Phả</td><td className="p-2 border text-center font-bold text-amber-600">C</td><td className="p-2 border italic">Cần cải thiện NS Doanh thu.</td></tr>
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+
+                        <div className="absolute bottom-[20mm] left-[20mm] right-[20mm] text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest border-t pt-2">
+                            Báo cáo được tạo tự động từ hệ thống VNPT Quảng Ninh Task Manager
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units, systemSettings }) => {
+    const [activeTab, setActiveTab] = useState('eval');
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+    const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
+    const [importedData, setImportedData] = useState<any[]>([]);
+    const [isLoadingData, setIsLoadingData] = useState(true);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [sheetColumns, setSheetColumns] = useState<string[]>([]);
+    const [analysisUnit, setAnalysisUnit] = useState('all');
+
+    const isAdmin = currentUser.username === 'admin';
+
+    const fetchData = useCallback(async () => {
+        setIsLoadingData(true);
+        const configId = `productivity_${selectedMonth}`;
+        const dataId = `productivity_${selectedMonth}`;
+        
+        const [configData, importedResult] = await Promise.all([
+            dbClient.getById('mobile_ops_configs', configId),
+            dbClient.getById('mobile_ops_data', dataId)
+        ]);
+
+        setConfig(configData || { type: 'productivity', period: selectedMonth, url: '', mapping: {} });
+        setImportedData(importedResult?.data || []);
+        setIsLoadingData(false);
+    }, [selectedMonth]);
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+
+    const { chartData, analysis } = useMemo(() => {
+        if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
+        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
+        
+        const data = units
+            .filter(u => u.level > 0)
+            .map(unit => {
+                const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
+                
+                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
+                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
+                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
+                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
+                
+                const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
+                const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
+                const g3Diff = g3DiffCol ? Number(row?.[g3DiffCol] || 0) : 0;
+                const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
+
+                const total = g1 + g2 + g3 + g4;
+                
+                return {
+                    name: unit.name,
+                    code: unit.code,
+                    id: unit.id,
+                    g1, g2, g3, g4, 
+                    g1Diff, g2Diff, g3Diff, g4Diff,
+                    total,
+                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
+                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
+                };
+            })
+            .filter(d => d.total > 0);
+
+        const sortedData = data.sort((a, b) => {
+            const indexA = SORT_ORDER.indexOf(a.name);
+            const indexB = SORT_ORDER.indexOf(b.name);
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        // Calculate Analysis based on Selection (analysisUnit)
+        let trends = { g1: 0, g2: 0, g3: 0, g4: 0 };
+        let mostImproved = { name: '...', val: 0 };
+        let mostDeclined = { name: '...', val: 0 };
+        let bestUnit = { name: '...', val: 0 };
+        let scopeName = "TOÀN TỈNH";
+
+        if (analysisUnit === 'all') {
+            sortedData.forEach(d => {
+                trends.g1 += d.g1Diff;
+                trends.g2 += d.g2Diff;
+                trends.g3 += d.g3Diff;
+                trends.g4 += d.g4Diff;
+
+                if (d.g4Diff > mostImproved.val) mostImproved = { name: d.name, val: d.g4Diff };
+                if (d.g1Diff > mostDeclined.val) mostDeclined = { name: d.name, val: d.g1Diff };
+                if (d.g4Percent > bestUnit.val) bestUnit = { name: d.name, val: d.g4Percent };
+            });
+        } else {
+            const targetUnit = sortedData.find(d => d.id === analysisUnit);
+            if (targetUnit) {
+                scopeName = targetUnit.name.toUpperCase();
+                trends = { g1: targetUnit.g1Diff, g2: targetUnit.g2Diff, g3: targetUnit.g3Diff, g4: targetUnit.g4Diff };
+                mostImproved = { name: targetUnit.name, val: targetUnit.g4Diff };
+                mostDeclined = { name: targetUnit.name, val: targetUnit.g1Diff };
+                bestUnit = { name: targetUnit.name, val: targetUnit.g4Percent };
+            }
+        }
+
+        return { 
+            chartData: sortedData, 
+            analysis: { 
+                trends,
+                improved: mostImproved,
+                declined: mostDeclined,
+                bestPercent: bestUnit,
+                scopeName
+            } 
+        };
+    }, [units, importedData, config, analysisUnit]);
+
+    const handleReadSheet = async () => {
+        if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            if (!res.ok) throw new Error("Không thể tải file.");
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            if (rows.length > 0) {
+                setSheetColumns(Object.keys(rows[0]));
+                alert("Đã đọc thành công các cột. Vui lòng ánh xạ.");
+            } else { alert("File rỗng."); }
+        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleSaveConfig = async () => {
+        const configId = `productivity_${selectedMonth}`;
+        await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type: 'productivity', period: selectedMonth });
+        alert("Đã lưu cấu hình!");
+    };
+
+    const handleSyncData = async () => {
+        if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            
+            const dataId = `productivity_${selectedMonth}`;
+            await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+            setImportedData(rows);
+            alert(`Đồng bộ thành công ${rows.length} dòng.`);
+            setActiveTab('eval');
+        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleQuickSync = async () => {
+        if (!isAdmin && !systemSettings?.allowKpiSync) return alert("Bị khóa bởi Admin.");
+        let targetMonth = selectedMonth;
+        if (isAdmin) {
+             const input = prompt("Nhập tháng (YYYY-MM):", selectedMonth);
+             if(!input || !/^\d{4}-\d{2}$/.test(input)) return;
+             targetMonth = input;
+        }
+        setIsProcessing(true);
+        try {
+             const configId = `productivity_${targetMonth}`;
+             const configData = await dbClient.getById('mobile_ops_configs', configId);
+             if (!configData?.url) return alert("Chưa có cấu hình.");
+             let finalUrl = configData.url.trim().replace('/edit', '/export?format=csv');
+             if(!finalUrl.includes('export?format=csv')) finalUrl += '/export?format=csv';
+
+             const res = await fetch(finalUrl);
+             const wb = XLSX.read(await res.text(), {type:'string'});
+             const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+             await dbClient.upsert('mobile_ops_data', `productivity_${targetMonth}`, {data:rows});
+             alert("Đồng bộ xong!");
+             if (targetMonth === selectedMonth) fetchData();
+             else setSelectedMonth(targetMonth);
+        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+    
+    // Updated renderLabel to include Percentage
+    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
+         const { x, y, width, height, value, payload } = props;
+         
+         // Fix: Check for valid payload and value
+         if (!payload || value === undefined || value === null || value === 0) return null;
+
+         // Calculate Percentage relative to total of the unit
+         const total = payload.total || 1;
+         const percent = (value / total) * 100;
+         const percentText = `${percent.toFixed(0)}%`;
+
+         // Format: "10 (25%)"
+         const fullText = `${value} (${percentText})`;
+         
+         // Calculate rough width requirements (approx 6px per char for 10px font)
+         const minWidthForFull = fullText.length * 6;
+         const minWidthForVal = String(value).length * 6;
+         
+         let textToShow = fullText;
+         
+         // Hide percentage if bar is too small, but try to show value
+         // Relaxed constraint: only switch to value-only if extremely tight
+         if (width < minWidthForFull) {
+             textToShow = `${value}`; 
+             // If extremely small, don't show anything to avoid clutter
+             if (width < minWidthForVal + 5) return null;
+         }
+
+         return (
+             <text 
+                x={x + width / 2} 
+                y={y + height / 2 + 1} 
+                fill={isDark ? "#FFFFFF" : "#000000"} 
+                textAnchor="middle" 
+                dominantBaseline="middle" 
+                fontSize={10} 
+                fontWeight="bold"
+                style={{ pointerEvents: 'none', textShadow: isDark ? '0px 1px 2px rgba(0,0,0,0.4)' : 'none' }}
+             >
+                 {textToShow}
+             </text>
+         );
+    };
+
+    // Custom Tooltip for Chart
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (active && payload && payload.length) {
+            return (
+                <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[200px] z-50">
+                    <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
+                    {payload.slice().reverse().map((entry: any, index: number) => {
+                        const dataKey = entry.dataKey;
+                        const diffKey = dataKey + 'Diff';
+                        const diff = entry.payload[diffKey];
+                        const sign = diff > 0 ? '+' : '';
+                        
+                        let evalText = "Ổn định";
+                        let evalColor = "text-slate-500";
+                        
+                        if (diff !== 0) {
+                            if (dataKey === 'g1') {
+                                if (diff > 0) { evalText = "Tiêu cực (Tăng)"; evalColor = "text-red-500"; }
+                                else { evalText = "Tích cực (Giảm)"; evalColor = "text-green-600"; }
+                            } else {
+                                if (diff > 0) { evalText = "Tích cực (Tăng)"; evalColor = "text-green-600"; }
+                                else { evalText = "Tiêu cực (Giảm)"; evalColor = "text-red-500"; }
+                            }
+                        }
+
+                        return (
+                            <div key={index} className="mb-2 last:mb-0">
+                                <div className="flex justify-between items-center gap-4">
+                                    <span style={{ color: entry.color }} className="font-bold">{entry.name}:</span>
+                                    <span className="font-black text-slate-700">{entry.value} NS</span>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px] pl-2 mt-0.5">
+                                    <span className="text-slate-400">Biến động:</span>
+                                    <span className={`font-bold ${diff > 0 ? 'text-blue-600' : diff < 0 ? 'text-red-500' : 'text-slate-400'}`}>
+                                        {diff !== 0 ? `${sign}${diff}` : '-'}
+                                    </span>
+                                </div>
+                                {diff !== 0 && (
+                                    <div className={`text-[9px] text-right font-bold italic ${evalColor}`}>
+                                        {evalText}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+        return null;
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
+             <div className="flex justify-between items-center border-b pb-4">
+                <h3 className="text-lg font-black tracking-tighter uppercase text-green-700">Năng suất kênh nội bộ</h3>
+                <div className="flex items-center gap-2">
+                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
+                    <button onClick={handleQuickSync} disabled={isProcessing} className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200" title="Đồng bộ"><RefreshCw size={14}/></button>
+                    {isAdmin && (<div className="flex bg-slate-100 p-1 rounded-xl border ml-2"><button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={14}/></button><button onClick={() => setActiveTab('config')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Settings size={14}/></button></div>)}
+                </div>
+            </div>
+            
+            <div className="flex-1 min-h-[300px]">
+                {activeTab === 'eval' ? (
+                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
+                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+                        <div className="lg:col-span-2 h-full">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
+                                    <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
+                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
+                                    <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
+                                    <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
+                                    
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
+                                    </Bar>
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
+                                    </Bar>
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
+                                    </Bar>
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', true)} />
+                                    </Bar>
+                                </BarChart>
+                             </ResponsiveContainer>
+                        </div>
+                        <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
+                            <div className="flex items-center justify-between mb-4">
+                                <h4 className="text-sm font-black uppercase text-slate-500 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
+                                <div className="flex items-center bg-white border rounded-lg px-2 py-1">
+                                    <Filter size={10} className="text-slate-400 mr-1"/>
+                                    <select 
+                                        className="text-[10px] font-bold outline-none bg-transparent max-w-[100px]"
+                                        value={analysisUnit}
+                                        onChange={(e) => setAnalysisUnit(e.target.value)}
+                                    >
+                                        <option value="all">Toàn tỉnh</option>
+                                        {chartData.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            {analysis && (
+                                <div className="space-y-6">
+                                    <div className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm">
+                                        <div className="flex items-center gap-2 text-blue-700 font-bold text-sm mb-3"><TrendingUp size={16}/> Phạm vi: {analysis.scopeName}</div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'>'} 15tr (G4)</div>
+                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g4 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g4 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
+                                                    {analysis.trends.g4 > 0 ? '+' : ''}{analysis.trends.g4}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'<'} 5tr (G1)</div>
+                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g1 <= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g1 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
+                                                    {analysis.trends.g1 > 0 ? '+' : ''}{analysis.trends.g1}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 10-15tr (G3)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g3 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g3 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
+                                                    {analysis.trends.g3 > 0 ? '+' : ''}{analysis.trends.g3}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 5-10tr (G2)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g2 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g2 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
+                                                    {analysis.trends.g2 > 0 ? '+' : ''}{analysis.trends.g2}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {analysisUnit === 'all' && (
+                                        <>
+                                            <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm">
+                                                <div className="flex items-center gap-2 text-green-700 font-bold text-sm mb-2"><Award size={16}/> Chuyển dịch tích cực nhất</div>
+                                                <p className="text-base font-black text-slate-800">{analysis.improved.name}</p>
+                                                <p className="text-xs text-slate-500 mt-1">
+                                                    Nhân sự nhóm {'>'} 15tr tăng thêm: <span className="font-bold text-green-600">+{analysis.improved.val}</span> NS.
+                                                </p>
+                                            </div>
+                                            
+                                            {analysis.declined.val > 0 && (
+                                                <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
+                                                    <div className="flex items-center gap-2 text-red-600 font-bold text-sm mb-2"><TrendingDown size={16}/> Cần lưu ý (Giảm năng suất)</div>
+                                                    <p className="text-base font-black text-slate-800">{analysis.declined.name}</p>
+                                                    <p className="text-xs text-slate-500 mt-1">
+                                                        Nhân sự nhóm {'<'} 5tr tăng thêm: <span className="font-bold text-red-500">+{analysis.declined.val}</span> NS.
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+
+                                    <div className="text-xs text-slate-400 italic text-justify leading-relaxed pt-2 border-t">
+                                        * Đơn vị có cơ cấu tốt nhất hiện tại (Tỷ lệ G4 cao nhất): <span className="font-bold text-slate-700">{analysis.bestPercent.name} ({analysis.bestPercent.val.toFixed(1)}%)</span>.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                     </div>
+                ) : (
+                    <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
+                        <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
+                        {sheetColumns.length > 0 && (
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu chính</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border">
+                                        <MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} />
+                                        <MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} />
+                                        <MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} />
+                                        <MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} />
+                                        <MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-blue-500">3. Ánh xạ so sánh (Q4/2025)</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                        <MappingSelect label="Chênh lệch < 5tr" columns={sheetColumns} value={config.mapping?.g1DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
                     </div>
                 )}
@@ -402,7 +1030,7 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
 
     }, [units, importedData, config, TARGET_PSSL, TARGET_SUB, TARGET_REV, selectedMonth]);
 
-    const handleReadSheet = async () => { /* ... Reuse similar logic ... */
+    const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
         try {
@@ -429,6 +1057,49 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
             await dbClient.upsert('mobile_ops_data', `quality_${selectedMonth}`, { data: rows });
             setImportedData(rows); alert(`Đồng bộ ${rows.length} dòng thành công.`); setActiveTab('eval');
         } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleQuickSync = async () => {
+        if (!isAdmin && !systemSettings?.allowKpiSync) return alert("Bị khóa bởi Admin.");
+        let targetMonth = selectedMonth;
+        if (isAdmin) {
+             const input = prompt("Nhập tháng muốn đồng bộ (YYYY-MM):", selectedMonth);
+             if(!input || !/^\d{4}-\d{2}$/.test(input)) return;
+             targetMonth = input;
+        }
+        setIsProcessing(true);
+        try {
+             const configId = `quality_${targetMonth}`;
+             const configData = await dbClient.getById('mobile_ops_configs', configId);
+             if (!configData || !configData.url || !configData.mapping?.unitCodeCol) {
+                alert(`Không tìm thấy cấu hình đồng bộ cho tháng ${targetMonth}.`);
+                setIsProcessing(false);
+                return;
+            }
+
+            let finalUrl = configData.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            
+            const dataId = `quality_${targetMonth}`;
+            await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+            
+            alert(`Đồng bộ thành công dữ liệu tháng ${targetMonth}!`);
+            
+            if (targetMonth === selectedMonth) {
+                fetchData();
+            } else if (isAdmin) {
+                setSelectedMonth(targetMonth);
+            }
+
+        } catch (e) {
+            alert("Lỗi đồng bộ: " + (e as Error).message);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     return (
@@ -558,411 +1229,11 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
     );
 };
 
-const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units, systemSettings }) => {
-    const [activeTab, setActiveTab] = useState('eval');
-    const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-    const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
-    const [importedData, setImportedData] = useState<any[]>([]);
-    const [isLoadingData, setIsLoadingData] = useState(true);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [sheetColumns, setSheetColumns] = useState<string[]>([]);
-    const [analysisUnit, setAnalysisUnit] = useState('all');
-
-    const isAdmin = currentUser.username === 'admin';
-
-    const fetchData = useCallback(async () => {
-        setIsLoadingData(true);
-        const configId = `productivity_${selectedMonth}`;
-        const dataId = `productivity_${selectedMonth}`;
-        
-        const [configData, importedResult] = await Promise.all([
-            dbClient.getById('mobile_ops_configs', configId),
-            dbClient.getById('mobile_ops_data', dataId)
-        ]);
-
-        setConfig(configData || { type: 'productivity', period: selectedMonth, url: '', mapping: {} });
-        setImportedData(importedResult?.data || []);
-        setIsLoadingData(false);
-    }, [selectedMonth]);
-
-    useEffect(() => { fetchData(); }, [fetchData]);
-
-    const { chartData, analysis } = useMemo(() => {
-        if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
-        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
-        
-        const data = units
-            .filter(u => u.level > 0)
-            .map(unit => {
-                const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
-                
-                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
-                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
-                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
-                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
-                
-                const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
-                const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
-                const g3Diff = g3DiffCol ? Number(row?.[g3DiffCol] || 0) : 0;
-                const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
-
-                const total = g1 + g2 + g3 + g4;
-                
-                return {
-                    name: unit.name,
-                    code: unit.code,
-                    id: unit.id,
-                    g1, g2, g3, g4, 
-                    g1Diff, g2Diff, g3Diff, g4Diff,
-                    total,
-                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
-                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
-                };
-            })
-            .filter(d => d.total > 0);
-
-        const sortedData = data.sort((a, b) => {
-            const indexA = SORT_ORDER.indexOf(a.name);
-            const indexB = SORT_ORDER.indexOf(b.name);
-            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            if (indexA !== -1) return -1;
-            if (indexB !== -1) return 1;
-            return a.name.localeCompare(b.name);
-        });
-
-        // Calculate Analysis based on Selection (analysisUnit)
-        let trends = { g1: 0, g2: 0, g3: 0, g4: 0 };
-        let mostImproved = { name: '...', val: 0 };
-        let mostDeclined = { name: '...', val: 0 };
-        let bestUnit = { name: '...', val: 0 };
-        let scopeName = "TOÀN TỈNH";
-
-        if (analysisUnit === 'all') {
-            sortedData.forEach(d => {
-                trends.g1 += d.g1Diff;
-                trends.g2 += d.g2Diff;
-                trends.g3 += d.g3Diff;
-                trends.g4 += d.g4Diff;
-
-                if (d.g4Diff > mostImproved.val) mostImproved = { name: d.name, val: d.g4Diff };
-                if (d.g1Diff > mostDeclined.val) mostDeclined = { name: d.name, val: d.g1Diff };
-                if (d.g4Percent > bestUnit.val) bestUnit = { name: d.name, val: d.g4Percent };
-            });
-        } else {
-            const targetUnit = sortedData.find(d => d.id === analysisUnit);
-            if (targetUnit) {
-                scopeName = targetUnit.name.toUpperCase();
-                trends = { g1: targetUnit.g1Diff, g2: targetUnit.g2Diff, g3: targetUnit.g3Diff, g4: targetUnit.g4Diff };
-                // Local stats (not strictly needed for single unit view but keeping structure)
-                mostImproved = { name: targetUnit.name, val: targetUnit.g4Diff };
-                mostDeclined = { name: targetUnit.name, val: targetUnit.g1Diff };
-                bestUnit = { name: targetUnit.name, val: targetUnit.g4Percent };
-            }
-        }
-
-        return { 
-            chartData: sortedData, 
-            analysis: { 
-                trends,
-                improved: mostImproved,
-                declined: mostDeclined,
-                bestPercent: bestUnit,
-                scopeName
-            } 
-        };
-    }, [units, importedData, config, analysisUnit]);
-
-    const handleReadSheet = async () => {
-        if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
-        setIsProcessing(true);
-        try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            if (!res.ok) throw new Error("Không thể tải file.");
-            const csv = await res.text();
-            const wb = XLSX.read(csv, { type: 'string' });
-            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            if (rows.length > 0) {
-                setSheetColumns(Object.keys(rows[0]));
-                alert("Đã đọc thành công các cột. Vui lòng ánh xạ.");
-            } else { alert("File rỗng."); }
-        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
-    };
-
-    const handleSaveConfig = async () => {
-        const configId = `productivity_${selectedMonth}`;
-        await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type: 'productivity', period: selectedMonth });
-        alert("Đã lưu cấu hình!");
-    };
-
-    const handleSyncData = async () => {
-        if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
-        setIsProcessing(true);
-        try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            const csv = await res.text();
-            const wb = XLSX.read(csv, { type: 'string' });
-            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-            
-            const dataId = `productivity_${selectedMonth}`;
-            await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
-            setImportedData(rows);
-            alert(`Đồng bộ thành công ${rows.length} dòng.`);
-            setActiveTab('eval');
-        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
-    };
-
-    const handleQuickSync = async () => {
-        if (!isAdmin && !systemSettings?.allowKpiSync) return alert("Bị khóa bởi Admin.");
-        let targetMonth = selectedMonth;
-        if (isAdmin) {
-             const input = prompt("Nhập tháng (YYYY-MM):", selectedMonth);
-             if(!input || !/^\d{4}-\d{2}$/.test(input)) return;
-             targetMonth = input;
-        }
-        setIsProcessing(true);
-        try {
-             const configId = `productivity_${targetMonth}`;
-             const configData = await dbClient.getById('mobile_ops_configs', configId);
-             if (!configData?.url) return alert("Chưa có cấu hình.");
-             let finalUrl = configData.url.trim().replace('/edit', '/export?format=csv');
-             if(!finalUrl.includes('export?format=csv')) finalUrl += '/export?format=csv';
-
-             const res = await fetch(finalUrl);
-             const wb = XLSX.read(await res.text(), {type:'string'});
-             const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-             await dbClient.upsert('mobile_ops_data', `productivity_${targetMonth}`, {data:rows});
-             alert("Đồng bộ xong!");
-             if (targetMonth === selectedMonth) fetchData();
-             else setSelectedMonth(targetMonth);
-        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
-    };
-    
-    // Custom label renderer for chart
-    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
-         const { x, y, width, height, value, payload } = props;
-         if (!value) return null;
-         
-         const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
-         const sign = diff > 0 ? '+' : '';
-         const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
-         
-         // Aggressively show diff if width allows (> 30px), otherwise just value
-         const text = (width > 30) ? `${value} ${diffText}` : `${value}`;
-
-         return (
-             <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
-                 {text}
-             </text>
-         );
-    };
-
-    // Custom Tooltip for Chart
-    const CustomTooltip = ({ active, payload, label }: any) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[200px] z-50">
-                    <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
-                    {payload.slice().reverse().map((entry: any, index: number) => {
-                        const dataKey = entry.dataKey;
-                        const diffKey = dataKey + 'Diff';
-                        const diff = entry.payload[diffKey];
-                        const sign = diff > 0 ? '+' : '';
-                        
-                        // Evaluation Logic
-                        let evalText = "Ổn định";
-                        let evalColor = "text-slate-500";
-                        
-                        if (diff !== 0) {
-                            if (dataKey === 'g1') {
-                                // G1: Increase is BAD, Decrease is GOOD
-                                if (diff > 0) { evalText = "Tiêu cực (Tăng)"; evalColor = "text-red-500"; }
-                                else { evalText = "Tích cực (Giảm)"; evalColor = "text-green-600"; }
-                            } else {
-                                // G2, G3, G4: Increase is GOOD, Decrease is BAD
-                                if (diff > 0) { evalText = "Tích cực (Tăng)"; evalColor = "text-green-600"; }
-                                else { evalText = "Tiêu cực (Giảm)"; evalColor = "text-red-500"; }
-                            }
-                        }
-
-                        return (
-                            <div key={index} className="mb-2 last:mb-0">
-                                <div className="flex justify-between items-center gap-4">
-                                    <span style={{ color: entry.color }} className="font-bold">{entry.name}:</span>
-                                    <span className="font-black text-slate-700">{entry.value} NS</span>
-                                </div>
-                                <div className="flex justify-between items-center text-[10px] pl-2 mt-0.5">
-                                    <span className="text-slate-400">Biến động:</span>
-                                    <span className={`font-bold ${diff > 0 ? 'text-blue-600' : diff < 0 ? 'text-red-500' : 'text-slate-400'}`}>
-                                        {diff !== 0 ? `${sign}${diff}` : '-'}
-                                    </span>
-                                </div>
-                                {diff !== 0 && (
-                                    <div className={`text-[9px] text-right font-bold italic ${evalColor}`}>
-                                        {evalText}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            );
-        }
-        return null;
-    };
-
-    return (
-        <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
-             <div className="flex justify-between items-center border-b pb-4">
-                <h3 className="text-lg font-black tracking-tighter uppercase text-green-700">Năng suất kênh nội bộ</h3>
-                <div className="flex items-center gap-2">
-                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
-                    <button onClick={handleQuickSync} disabled={isProcessing} className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200" title="Đồng bộ"><RefreshCw size={14}/></button>
-                    {isAdmin && (<div className="flex bg-slate-100 p-1 rounded-xl border ml-2"><button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={14}/></button><button onClick={() => setActiveTab('config')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Settings size={14}/></button></div>)}
-                </div>
-            </div>
-            
-            <div className="flex-1 min-h-[300px]">
-                {activeTab === 'eval' ? (
-                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
-                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
-                        <div className="lg:col-span-2 h-full">
-                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
-                                    <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
-                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
-                                    <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
-                                    <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
-                                    
-                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
-                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
-                                    </Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
-                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
-                                    </Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
-                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
-                                    </Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
-                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', true)} />
-                                    </Bar>
-                                </BarChart>
-                             </ResponsiveContainer>
-                        </div>
-                        <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
-                            <div className="flex items-center justify-between mb-4">
-                                <h4 className="text-sm font-black uppercase text-slate-500 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
-                                <div className="flex items-center bg-white border rounded-lg px-2 py-1">
-                                    <Filter size={10} className="text-slate-400 mr-1"/>
-                                    <select 
-                                        className="text-[10px] font-bold outline-none bg-transparent max-w-[100px]"
-                                        value={analysisUnit}
-                                        onChange={(e) => setAnalysisUnit(e.target.value)}
-                                    >
-                                        <option value="all">Toàn tỉnh</option>
-                                        {chartData.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                    </select>
-                                </div>
-                            </div>
-                            {analysis && (
-                                <div className="space-y-6">
-                                    <div className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm">
-                                        <div className="flex items-center gap-2 text-blue-700 font-bold text-sm mb-3"><TrendingUp size={16}/> Phạm vi: {analysis.scopeName}</div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'>'} 15tr (G4)</div>
-                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g4 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g4 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
-                                                    {analysis.trends.g4 > 0 ? '+' : ''}{analysis.trends.g4}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'<'} 5tr (G1)</div>
-                                                {/* G1 Logic: Increase is BAD (Red), Decrease is GOOD (Green) */}
-                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g1 <= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g1 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
-                                                    {analysis.trends.g1 > 0 ? '+' : ''}{analysis.trends.g1}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 10-15tr (G3)</div>
-                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g3 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g3 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
-                                                    {analysis.trends.g3 > 0 ? '+' : ''}{analysis.trends.g3}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 5-10tr (G2)</div>
-                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g2 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g2 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
-                                                    {analysis.trends.g2 > 0 ? '+' : ''}{analysis.trends.g2}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    {analysisUnit === 'all' && (
-                                        <>
-                                            <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm">
-                                                <div className="flex items-center gap-2 text-green-700 font-bold text-sm mb-2"><Award size={16}/> Chuyển dịch tích cực nhất</div>
-                                                <p className="text-base font-black text-slate-800">{analysis.improved.name}</p>
-                                                <p className="text-xs text-slate-500 mt-1">
-                                                    Nhân sự nhóm {'>'} 15tr tăng thêm: <span className="font-bold text-green-600">+{analysis.improved.val}</span> NS.
-                                                </p>
-                                            </div>
-                                            
-                                            {analysis.declined.val > 0 && (
-                                                <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
-                                                    <div className="flex items-center gap-2 text-red-600 font-bold text-sm mb-2"><TrendingDown size={16}/> Cần lưu ý (Giảm năng suất)</div>
-                                                    <p className="text-base font-black text-slate-800">{analysis.declined.name}</p>
-                                                    <p className="text-xs text-slate-500 mt-1">
-                                                        Nhân sự nhóm {'<'} 5tr tăng thêm: <span className="font-bold text-red-500">+{analysis.declined.val}</span> NS.
-                                                    </p>
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-
-                                    <div className="text-xs text-slate-400 italic text-justify leading-relaxed pt-2 border-t">
-                                        * Đơn vị có cơ cấu tốt nhất hiện tại (Tỷ lệ G4 cao nhất): <span className="font-bold text-slate-700">{analysis.bestPercent.name} ({analysis.bestPercent.val.toFixed(1)}%)</span>.
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                     </div>
-                ) : (
-                    <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
-                        <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="space-y-4 col-span-2">
-                                {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu</label><div className="grid grid-cols-2 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} /><MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} /><MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} /><MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} /></div></div>)}
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-purple-600">3. Ánh xạ so sánh (Q4/2025)</label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                    <MappingSelect label="Chênh lệch < 5tr" columns={sheetColumns} value={config.mapping?.g1DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1DiffCol: v}})} />
-                                    <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
-                                    <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
-                                    <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
-                                </div>
-                            </div>
-                        </div>
-                        <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
 const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, systemSettings, onRefresh }) => {
+  const [showReportModal, setShowReportModal] = useState(false);
+
   return (
-    <div className="space-y-8 animate-fade-in pb-20">
+    <div className="space-y-8 animate-fade-in pb-20 relative">
       <div className="flex justify-between items-end border-b pb-6">
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
@@ -972,6 +1243,9 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, syst
             Theo dõi chỉ tiêu PTTB, Doanh thu & Năng suất lao động
           </p>
         </div>
+        <button onClick={() => setShowReportModal(true)} className="bg-slate-800 text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 hover:bg-black transition-all shadow-lg">
+            <FileText size={16}/> Tổng hợp báo cáo
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[550px]">
@@ -1012,6 +1286,8 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, syst
             systemSettings={systemSettings}
          />
       </div>
+
+      {showReportModal && <AggregateReportView onClose={() => setShowReportModal(false)} />}
     </div>
   );
 };
