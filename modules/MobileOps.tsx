@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
 import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter } from 'lucide-react';
@@ -506,8 +507,9 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
          const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
          const sign = diff > 0 ? '+' : '';
          const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
-         // Shorten label if space is tight: Just value if width < 40
-         const text = width < 40 ? value : `${value} ${diffText}`;
+         
+         // Aggressively show diff if width allows (> 30px), otherwise just value
+         const text = (width > 30) ? `${value} ${diffText}` : `${value}`;
 
          return (
              <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
@@ -722,29 +724,54 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             </div>
         </div>
     );
-}
+};
 
-const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
-    return (
-        <div className="space-y-8 animate-fade-in pb-20">
-            <div className="border-b pb-6">
-                <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
-                    <Smartphone className="text-blue-600" size={36} /> DASHBOARD CTHĐ DI ĐỘNG
-                </h2>
-                <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Giám sát chỉ tiêu PTM & Doanh thu theo thời gian thực</p>
-            </div>
-            
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <MobileKpiView type="subscribers" title="Thuê bao di động PTM" {...props} onRefreshParent={props.onRefresh} />
-                <MobileKpiView type="revenue" title="Doanh thu PTM" {...props} onRefreshParent={props.onRefresh} />
-            </div>
-
-            {/* New Productivity Module */}
-            <div className="mt-8">
-                <ProductivityView {...props} />
-            </div>
+const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, systemSettings, onRefresh }) => {
+  return (
+    <div className="space-y-8 animate-fade-in pb-20">
+      <div className="flex justify-between items-end border-b pb-6">
+        <div>
+          <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
+            <Smartphone className="text-blue-600" size={36}/> DASHBOARD CTHĐ DI ĐỘNG
+          </h2>
+          <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">
+            Theo dõi chỉ tiêu PTTB, Doanh thu & Năng suất lao động
+          </p>
         </div>
-    );
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[550px]">
+        <div className="h-full">
+            <MobileKpiView 
+            type="subscribers" 
+            title="Phát triển thuê bao" 
+            currentUser={currentUser} 
+            units={units}
+            systemSettings={systemSettings}
+            onRefreshParent={onRefresh}
+            />
+        </div>
+        <div className="h-full">
+            <MobileKpiView 
+            type="revenue" 
+            title="Doanh thu di động" 
+            currentUser={currentUser} 
+            units={units}
+            systemSettings={systemSettings}
+            onRefreshParent={onRefresh}
+            />
+        </div>
+      </div>
+
+      <div className="h-[800px]">
+         <ProductivityView 
+            currentUser={currentUser}
+            units={units}
+            systemSettings={systemSettings}
+        />
+      </div>
+    </div>
+  );
 };
 
 export default MobileOpsDashboard;
