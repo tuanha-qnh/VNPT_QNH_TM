@@ -13,6 +13,7 @@ interface DashboardProps {
   currentUser: User;
   groupKpi: any[];
   kpiDefinitions: KPIDefinition[];
+  systemSettings: any;
   onRefresh: () => void;
 }
 
@@ -27,7 +28,7 @@ const kpiDetails: Record<string, { icon: React.ReactElement, color: string, bgCo
 };
 
 
-const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, kpiDefinitions, onRefresh }) => {
+const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser, groupKpi, kpiDefinitions, systemSettings, onRefresh }) => {
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
@@ -44,10 +45,26 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
   }, [currentUser.id]);
 
   const handleSyncKpi = async () => {
-    const monthToSync = prompt("Nhập tháng muốn đồng bộ dữ liệu (định dạng YYYY-MM):", new Date().toISOString().slice(0, 7));
-    if (!monthToSync || !/^\d{4}-\d{2}$/.test(monthToSync)) {
-        if (monthToSync) alert("Định dạng tháng không hợp lệ. Vui lòng nhập YYYY-MM.");
+    const isAdmin = currentUser.username === 'admin';
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    // 1. Kiểm tra quyền đồng bộ
+    if (!isAdmin && !systemSettings?.allowKpiSync) {
+        alert("Chức năng đồng bộ KPI đang bị khóa bởi Quản trị viên.");
         return;
+    }
+
+    let monthToSync = currentMonth;
+    
+    // 2. Nếu là Admin thì được chọn tháng, User khác mặc định tháng hiện tại
+    if (isAdmin) {
+        const input = prompt("Nhập tháng muốn đồng bộ dữ liệu (định dạng YYYY-MM):", currentMonth);
+        if (!input) return; // Người dùng hủy
+        if (!/^\d{4}-\d{2}$/.test(input)) {
+            alert("Định dạng tháng không hợp lệ. Vui lòng nhập YYYY-MM.");
+            return;
+        }
+        monthToSync = input;
     }
 
     setIsSyncing(true);
@@ -107,12 +124,12 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
             alert(`Đồng bộ hoàn tất!\n- Dữ liệu: ${syncedModes.join(', ')}\n- Tháng: ${monthToSync}\n- Số bản ghi: ${totalSynced}`);
             onRefresh();
         } else {
-            alert(`Không tìm thấy dữ liệu hoặc cấu hình import cho tháng ${monthToSync}. Vui lòng kiểm tra lại hoặc yêu cầu Admin thiết lập.`);
+            alert(`Không tìm thấy dữ liệu hoặc cấu hình import cho tháng ${monthToSync}. Vui lòng liên hệ Admin.`);
         }
 
     } catch (e) {
         console.error("Sync error:", e);
-        alert("Đã xảy ra lỗi trong quá trình đồng bộ dữ liệu. Vui lòng kiểm tra lại URL trong phần cấu hình KPI.");
+        alert("Đã xảy ra lỗi trong quá trình đồng bộ dữ liệu.");
     } finally {
         setIsSyncing(false);
     }

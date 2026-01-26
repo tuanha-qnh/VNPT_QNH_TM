@@ -23,6 +23,9 @@ const App: React.FC = () => {
   const [activeModule, setActiveModule] = useState(() => localStorage.getItem('vnpt_active_module') || 'dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  // System Settings
+  const [systemSettings, setSystemSettings] = useState<any>({ allowKpiSync: false });
+
   // State cho màn hình cưỡng bức đổi mật khẩu
   const [forcePassData, setForcePassData] = useState({ new: '', confirm: '' });
   const [isSubmittingForcePass, setIsSubmittingForcePass] = useState(false);
@@ -43,13 +46,14 @@ const App: React.FC = () => {
       
       try {
           const [
-              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult
+              unitsData, usersData, tasksData, kpisData, kpiDefsDataResult, settingsData
           ] = await Promise.all([
               dbClient.getAll('units'),
               dbClient.getAll('users'),
               dbClient.getAll('tasks'),
               dbClient.getAll('kpis'),
-              dbClient.getAll('kpi_definitions')
+              dbClient.getAll('kpi_definitions'),
+              dbClient.getById('system_settings', 'general')
           ]);
 
           let kpiDefsData = kpiDefsDataResult as KPIDefinition[];
@@ -72,6 +76,9 @@ const App: React.FC = () => {
           setTasks(tasksData as Task[]);
           setKpis(kpisData || []);
           setKpiDefinitions(kpiDefsData.sort((a,b) => (a.order || 99) - (b.order || 99)));
+          if (settingsData) {
+            setSystemSettings(settingsData);
+          }
           
           const stored = localStorage.getItem('vnpt_user_session');
           if (stored) {
@@ -160,16 +167,16 @@ const App: React.FC = () => {
   const renderModule = () => {
     if (isInitialLoading) return <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-600 font-bold"><Loader2 className="animate-spin" size={48} /> <span>Đang kết nối Cloud...</span></div>;
     switch (activeModule) {
-      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
+      case 'dashboard': return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} systemSettings={systemSettings} onRefresh={() => fetchInitialData(true)} />;
       case 'admin': return <Admin units={units} users={users} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'tasks': return <Tasks tasks={tasks} users={users} units={units} currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
       case 'personal-tasks': return <PersonalTasks currentUser={currentUser!} />;
-      case 'mobile-ops': return <MobileOps currentUser={currentUser!} users={users} units={units} onRefresh={() => fetchInitialData(true)} />;
+      case 'mobile-ops': return <MobileOps currentUser={currentUser!} users={users} units={units} systemSettings={systemSettings} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-personal': return <KPI mode="personal" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'kpi-group': return <KPI mode="group" users={users} units={units} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'reports': return <Reports tasks={tasks} units={units} users={users} currentUser={currentUser!} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
       case 'settings': return <Settings currentUser={currentUser!} onRefresh={() => fetchInitialData(true)} />;
-      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} onRefresh={() => fetchInitialData(true)} />;
+      default: return <Dashboard tasks={tasks} units={units} users={users} currentUser={currentUser!} groupKpi={kpis} kpiDefinitions={kpiDefinitions} systemSettings={systemSettings} onRefresh={() => fetchInitialData(true)} />;
     }
   };
 

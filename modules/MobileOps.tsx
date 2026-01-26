@@ -21,6 +21,7 @@ interface MobileOpsConfig {
 interface MobileOpsProps {
   currentUser: User;
   units: Unit[];
+  systemSettings: any;
   onRefresh: () => void;
 }
 
@@ -41,8 +42,9 @@ const MobileKpiView: React.FC<{
     title: string,
     currentUser: User,
     units: Unit[],
+    systemSettings: any;
     onRefreshParent: () => void;
-}> = ({ type, title, currentUser, units, onRefreshParent }) => {
+}> = ({ type, title, currentUser, units, systemSettings, onRefreshParent }) => {
     const [activeTab, setActiveTab] = useState('eval');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
     const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
@@ -170,14 +172,80 @@ const MobileKpiView: React.FC<{
         }
     };
 
+    const handleQuickSync = async () => {
+        // 1. Kiểm tra quyền
+        if (!isAdmin && !systemSettings?.allowKpiSync) {
+            alert("Chức năng đồng bộ đang bị khóa bởi Quản trị viên.");
+            return;
+        }
+
+        // 2. Xác định tháng cần đồng bộ
+        let targetMonth = new Date().toISOString().slice(0, 7);
+        if (isAdmin) {
+            const input = prompt("Nhập tháng muốn đồng bộ (YYYY-MM):", selectedMonth);
+            if (!input) return;
+            if (!/^\d{4}-\d{2}$/.test(input)) return alert("Tháng không hợp lệ.");
+            targetMonth = input;
+        }
+
+        setIsProcessing(true);
+        try {
+            // 3. Lấy cấu hình từ DB (vì user có thể không đang ở tab Config)
+            const configId = `${type}_${targetMonth}`;
+            const configData = await dbClient.getById('mobile_ops_configs', configId);
+
+            if (!configData || !configData.url || !configData.mapping?.unitCodeCol) {
+                alert(`Không tìm thấy cấu hình đồng bộ cho tháng ${targetMonth}. Vui lòng liên hệ Admin cấu hình trước.`);
+                setIsProcessing(false);
+                return;
+            }
+
+            // 4. Thực hiện đồng bộ
+            let finalUrl = configData.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            
+            const dataId = `${type}_${targetMonth}`;
+            await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+            
+            alert(`Đồng bộ thành công dữ liệu tháng ${targetMonth}!`);
+            
+            // Nếu đang xem đúng tháng vừa đồng bộ thì load lại
+            if (targetMonth === selectedMonth) {
+                fetchData();
+            } else if (isAdmin) {
+                setSelectedMonth(targetMonth); // Chuyển view sang tháng vừa đồng bộ
+            }
+
+        } catch (e) {
+            alert("Lỗi đồng bộ: " + (e as Error).message);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     return (
         <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
             <div className="flex justify-between items-center border-b pb-4">
                 <h3 className={`text-lg font-black tracking-tighter uppercase ${type === 'revenue' ? 'text-orange-600' : 'text-slate-800'}`}>{title}</h3>
                 <div className="flex items-center gap-2">
                     <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
+                    
+                    {/* Nút Đồng bộ nhanh */}
+                    <button 
+                        onClick={handleQuickSync} 
+                        disabled={isProcessing}
+                        className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200 transition-colors" 
+                        title="Đồng bộ dữ liệu"
+                    >
+                        {isProcessing ? <Loader2 className="animate-spin" size={14}/> : <RefreshCw size={14}/>}
+                    </button>
+
                     {isAdmin && (
-                        <div className="flex bg-slate-100 p-1 rounded-xl border">
+                        <div className="flex bg-slate-100 p-1 rounded-xl border ml-2">
                              <button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] font-black ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`} title="Xem biểu đồ"><TrendingUp size={14}/></button>
                              <button onClick={() => setActiveTab('config')} className={`p-1.5 rounded-lg text-[10px] font-black ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`} title="Cấu hình"><Settings size={14}/></button>
                         </div>
@@ -185,7 +253,7 @@ const MobileKpiView: React.FC<{
                 </div>
             </div>
 
-            <div className="flex-1 min-h-[500px]">
+            <div className="flex-1 min-h-[350px]">
                 {activeTab === 'eval' ? (
                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin mx-auto text-blue-500" size={32}/></div> :
                     <div className="h-full w-full">
@@ -195,10 +263,31 @@ const MobileKpiView: React.FC<{
                                 <XAxis dataKey="name" interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} angle={-45} textAnchor="end" height={80} />
                                 <YAxis yAxisId="left" tick={{fontSize: 10}} />
                                 <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tickFormatter={(v) => `${v}%`} tick={{fontSize: 10}} />
-                                <Tooltip formatter={(value: number, name: string) => [
-                                    name === 'percent' ? `${value}%` : value.toLocaleString(), 
-                                    name === 'actual' ? 'Thực hiện' : name === 'target' ? 'Kế hoạch' : 'Tỷ lệ TH'
-                                ]}/>
+                                
+                                <Tooltip content={({ active, payload, label }) => {
+                                    if (active && payload && payload.length) {
+                                        const data = payload[0].payload;
+                                        return (
+                                            <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[180px] z-50">
+                                                <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
+                                                <div className="flex justify-between items-center gap-4 mb-1">
+                                                    <span className="text-slate-500 font-bold">Kế hoạch giao:</span>
+                                                    <span className="font-black text-slate-700">{data.target.toLocaleString()}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center gap-4 mb-1">
+                                                    <span className="text-slate-500 font-bold">Kết quả thực hiện:</span>
+                                                    <span className={`font-black ${type === 'revenue' ? 'text-orange-500' : 'text-blue-600'}`}>{data.actual.toLocaleString()}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center gap-4">
+                                                    <span className="text-slate-500 font-bold">Tỷ lệ thực hiện:</span>
+                                                    <span className={`font-black ${type === 'revenue' ? 'text-blue-600' : 'text-yellow-600'}`}>{data.percent}%</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                }} cursor={{fill: 'transparent'}} />
+
                                 <Legend 
                                     verticalAlign="top" 
                                     align="center" 

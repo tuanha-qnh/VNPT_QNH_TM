@@ -1,6 +1,6 @@
 
-import React, { useState, useRef } from 'react';
-import { Mail, Save, Shield, AlertCircle, Loader2, Key, RotateCcw, ShieldAlert, Settings as SettingsIcon, Camera, CheckCircle2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Mail, Save, Shield, AlertCircle, Loader2, Key, RotateCcw, ShieldAlert, Settings as SettingsIcon, Camera, CheckCircle2, Lock, Unlock } from 'lucide-react';
 import { User, Role } from '../types';
 import { dbClient } from '../utils/firebaseClient';
 import md5 from 'md5';
@@ -15,9 +15,19 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onRefresh }) => {
     const [isChangingPass, setIsChangingPass] = useState(false);
     const [isResetting, setIsResetting] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [systemSettings, setSystemSettings] = useState({ allowKpiSync: false });
+    const [isSavingSettings, setIsSavingSettings] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     
     const isSystemAdmin = currentUser.username === 'admin';
+
+    useEffect(() => {
+        if (isSystemAdmin) {
+            dbClient.getById('system_settings', 'general').then(res => {
+                if (res) setSystemSettings({ allowKpiSync: res.allowKpiSync });
+            });
+        }
+    }, [isSystemAdmin]);
 
     // Chính sách mật khẩu: 8 ký tự, 1 chữ, 1 số, 1 ký tự đặc biệt
     const validatePassword = (pass: string) => {
@@ -81,6 +91,18 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onRefresh }) => {
         finally { setIsChangingPass(false); }
     };
 
+    const handleSaveSystemSettings = async () => {
+        setIsSavingSettings(true);
+        try {
+            await dbClient.upsert('system_settings', 'general', systemSettings);
+            alert("Đã lưu cấu hình hệ thống!");
+        } catch (e) {
+            alert("Lỗi lưu cấu hình");
+        } finally {
+            setIsSavingSettings(false);
+        }
+    };
+
     const handleResetDatabase = async () => {
         if (!isSystemAdmin) return;
         const confirm1 = confirm("CẢNH BÁO NGUY HIỂM!\n\nHành động này sẽ XÓA SẠCH dữ liệu Cloud. Tiếp tục?");
@@ -137,6 +159,36 @@ const Settings: React.FC<SettingsProps> = ({ currentUser, onRefresh }) => {
                 </div>
 
                 <div className="md:col-span-2 space-y-8">
+                    {isSystemAdmin && (
+                        <div className="bg-white rounded-[40px] shadow-sm border p-10 space-y-8">
+                            <div className="flex items-center gap-3 border-b pb-6">
+                                <Shield className="text-purple-600" size={24}/>
+                                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Cấu hình Quản trị viên</h3>
+                            </div>
+                            <div className="flex items-center justify-between bg-purple-50 p-6 rounded-3xl border border-purple-100">
+                                <div>
+                                    <div className="text-sm font-black text-slate-800 flex items-center gap-2">
+                                        {systemSettings.allowKpiSync ? <Unlock size={16} className="text-green-600"/> : <Lock size={16} className="text-red-500"/>}
+                                        Cho phép người dùng đồng bộ KPI
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 mt-1 max-w-sm">
+                                        Khi tắt, chỉ Admin mới có thể đồng bộ dữ liệu KPI và Mobile Ops từ Google Sheet.
+                                        User khác sẽ bị chặn nút đồng bộ.
+                                    </p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={systemSettings.allowKpiSync} onChange={e => setSystemSettings({...systemSettings, allowKpiSync: e.target.checked})} />
+                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                </label>
+                            </div>
+                            <div className="flex justify-end">
+                                <button onClick={handleSaveSystemSettings} disabled={isSavingSettings} className="bg-purple-600 text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg shadow-purple-100 hover:bg-purple-700 flex items-center gap-2">
+                                    {isSavingSettings ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu cấu hình
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="bg-white rounded-[40px] shadow-sm border p-10 space-y-8">
                         <div className="flex items-center gap-3 border-b pb-6">
                             <Key className="text-blue-600" size={24}/>
