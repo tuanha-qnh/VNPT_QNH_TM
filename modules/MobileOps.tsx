@@ -582,7 +582,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 </div>
             </div>
             
-            <div className="flex-1 min-h-[400px]">
+            <div className="flex-1 min-h-[300px]">
                 {activeTab === 'eval' ? (
                      isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
@@ -762,7 +762,7 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, syst
         </div>
       </div>
 
-      <div className="h-[800px]">
+      <div className="h-[600px]">
          <ProductivityView 
             currentUser={currentUser}
             units={units}
