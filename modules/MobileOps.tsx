@@ -20,6 +20,11 @@ interface MobileOpsConfig {
     g2Col?: string; // 5-10tr
     g3Col?: string; // 10-15tr
     g4Col?: string; // > 15tr
+    // Diff columns (Comparison with Q4/2025)
+    g1DiffCol?: string; 
+    g2DiffCol?: string;
+    g3DiffCol?: string;
+    g4DiffCol?: string;
   };
 }
 
@@ -324,22 +329,30 @@ const ProductivityView: React.FC<{
 
     const { chartData, analysis } = useMemo(() => {
         if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
-        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col } = config.mapping;
+        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
         
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
                 const row = importedData.find(d => String(d[unitCodeCol]) === String(unit.code));
+                
                 const g1 = Number(row?.[g1Col!] || 0); // < 5tr
                 const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
                 const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
                 const g4 = Number(row?.[g4Col!] || 0); // > 15tr
+                
+                const g1Diff = Number(row?.[g1DiffCol!] || 0);
+                const g2Diff = Number(row?.[g2DiffCol!] || 0);
+                const g3Diff = Number(row?.[g3DiffCol!] || 0);
+                const g4Diff = Number(row?.[g4DiffCol!] || 0);
+
                 const total = g1 + g2 + g3 + g4;
                 
                 return {
                     name: unit.name,
-                    g1, g2, g3, g4, total,
-                    // Tính % để sắp xếp hoặc phân tích (không dùng để vẽ trực tiếp vì Recharts stackOffset="expand" tự làm)
+                    g1, g2, g3, g4, 
+                    g1Diff, g2Diff, g3Diff, g4Diff,
+                    total,
                     g4Percent: total > 0 ? (g4 / total) * 100 : 0,
                     g1Percent: total > 0 ? (g1 / total) * 100 : 0
                 };
@@ -436,6 +449,14 @@ const ProductivityView: React.FC<{
              else setSelectedMonth(targetMonth);
         } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
     };
+    
+    // Formatter cho LabelList để hiển thị (Giá trị + Chênh lệch)
+    const diffFormatter = (value: number, diff: number) => {
+        if (value === 0) return '';
+        if (!diff || diff === 0) return value;
+        const sign = diff > 0 ? '↑' : '↓';
+        return `${value} (${sign}${Math.abs(diff)})`;
+    };
 
     return (
         <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
@@ -459,12 +480,44 @@ const ProductivityView: React.FC<{
                                     <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
                                     <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
                                     <Tooltip formatter={(val: number, name: string, props: any) => { const total = props.payload.total; const pct = ((val/total)*100).toFixed(1); return [`${val} NS (${pct}%)`, name]; }} cursor={{fill: 'transparent'}}/>
-                                    <Legend iconSize={10} wrapperStyle={{fontSize: '10px', fontWeight: 'bold'}}/>
+                                    <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
                                     
-                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444"><LabelList dataKey="g1" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#F97316"><LabelList dataKey="g2" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#84CC16"><LabelList dataKey="g3" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'black', fontWeight:'bold'}}/></Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#15803D"><LabelList dataKey="g4" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444">
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => {
+                                            const { x, y, width, height, value } = props;
+                                            const diff = props.payload.g1Diff;
+                                            if (!value) return null;
+                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
+                                        }} />
+                                    </Bar>
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#F97316">
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => {
+                                            const { x, y, width, height, value } = props;
+                                            const diff = props.payload.g2Diff;
+                                            if (!value) return null;
+                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
+                                        }} />
+                                    </Bar>
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#84CC16">
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => {
+                                            const { x, y, width, height, value } = props;
+                                            const diff = props.payload.g3Diff;
+                                            if (!value) return null;
+                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            return <text x={x + width / 2} y={y + height / 2} fill="#000" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
+                                        }} />
+                                    </Bar>
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#15803D">
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => {
+                                            const { x, y, width, height, value } = props;
+                                            const diff = props.payload.g4Diff;
+                                            if (!value) return null;
+                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
+                                        }} />
+                                    </Bar>
                                 </BarChart>
                              </ResponsiveContainer>
                         </div>
@@ -485,6 +538,9 @@ const ProductivityView: React.FC<{
                                     <div className="text-[10px] text-slate-400 italic text-justify leading-relaxed">
                                         * Biểu đồ thể hiện cơ cấu thu nhập/năng suất của từng địa bàn. Các đơn vị có tỷ lệ màu xanh đậm (G4) cao cho thấy lực lượng lao động chất lượng tốt. Ngược lại, màu đỏ (G1) cảnh báo rủi ro về thu nhập thấp.
                                     </div>
+                                    <div className="text-[10px] text-blue-600 font-bold italic text-justify leading-relaxed border-t pt-2">
+                                        * Các con số trong ngoặc (↑/↓) thể hiện sự chênh lệch số lượng nhân sự so với Q4/2025.
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -492,7 +548,29 @@ const ProductivityView: React.FC<{
                 ) : (
                     <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
                         <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
-                        {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label><div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} /><MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} /><MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} /><MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} /></div></div>)}
+                        {sheetColumns.length > 0 && (
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu chính</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border">
+                                        <MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} />
+                                        <MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} />
+                                        <MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} />
+                                        <MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} />
+                                        <MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-blue-500">3. Ánh xạ so sánh (Q4/2025)</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                        <MappingSelect label="Chênh lệch < 5tr" columns={sheetColumns} value={config.mapping?.g1DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
+                                        <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
                     </div>
                 )}
