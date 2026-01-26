@@ -444,9 +444,9 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
             <div className="flex-1 min-h-[400px]">
                 {activeTab === 'eval' ? (
                      isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-purple-600"/></div> :
-                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 h-full">
+                     <div className="flex flex-col gap-6 h-full">
                          {/* Charts Area */}
-                         <div className="xl:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-[300px]">
                              {/* Chart 1: PSSL Rate (Horizontal) */}
                              <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
                                  <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Tỷ lệ nhân viên PSSL</h4>
@@ -515,19 +515,19 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
                          </div>
                          
                          {/* Analysis Text Area */}
-                         <div className="bg-purple-50 rounded-2xl p-6 border border-purple-100 flex flex-col">
+                         <div className="bg-purple-50 rounded-2xl p-6 border border-purple-100 flex flex-col shrink-0">
                              <div className="flex items-center gap-2 text-purple-700 font-bold text-sm mb-4 border-b border-purple-200 pb-2">
                                  <ShieldCheck size={18}/> ĐÁNH GIÁ THỰC TRẠNG
                              </div>
-                             <div className="flex-1 text-sm font-medium text-slate-700 leading-relaxed whitespace-pre-line text-justify overflow-y-auto">
+                             <div className="text-sm font-medium text-slate-700 leading-relaxed whitespace-pre-line text-justify">
                                  {processedData.evaluation}
                              </div>
                              <div className="mt-4 pt-4 border-t border-purple-200">
                                  <h5 className="text-[10px] font-black uppercase text-slate-500 mb-2">Mục tiêu điều hành:</h5>
-                                 <div className="space-y-1 text-xs font-bold text-slate-600">
-                                     <div className="flex justify-between"><span>Tỷ lệ PSSL:</span> <span className="text-purple-700">{TARGET_PSSL}%</span></div>
-                                     <div className="flex justify-between"><span>NS PTTB:</span> <span className="text-purple-700">{TARGET_SUB} TB</span></div>
-                                     <div className="flex justify-between"><span>NS Doanh thu:</span> <span className="text-purple-700">{TARGET_REV} Tr.đ</span></div>
+                                 <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-600">
+                                     <div className="flex gap-2"><span>Tỷ lệ PSSL:</span> <span className="text-purple-700">{TARGET_PSSL}%</span></div>
+                                     <div className="flex gap-2"><span>NS PTTB:</span> <span className="text-purple-700">{TARGET_SUB} TB</span></div>
+                                     <div className="flex gap-2"><span>NS Doanh thu:</span> <span className="text-purple-700">{TARGET_REV} Tr.đ</span></div>
                                  </div>
                              </div>
                          </div>
