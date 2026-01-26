@@ -136,7 +136,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
   const rejectExtension = async (task: Task) => {
     if (!task.extensionRequest) return;
     const reason = prompt("Lý do từ chối (không bắt buộc):");
-    const updatedRequest = { ...task.extensionRequest, status: 'rejected', rejectionReason: reason || "Không có lý do cụ thể." };
+    const updatedRequest: ExtensionRequest = { ...task.extensionRequest, status: 'rejected', rejectionReason: reason || "Không có lý do cụ thể." };
     await dbClient.update('tasks', task.id, { extensionRequest: updatedRequest });
     onRefresh();
     if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, extensionRequest: updatedRequest});

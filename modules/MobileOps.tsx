@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
-import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw, Briefcase, Award, AlertCircle } from 'lucide-react';
+import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw, Briefcase, Award, AlertCircle, ArrowUpRight, ArrowDownRight, TrendingDown } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend } from 'recharts';
@@ -9,18 +9,16 @@ import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, C
 interface MobileOpsConfig {
   id: string; 
   type: 'subscribers' | 'revenue' | 'productivity';
-  period: string; // YYYY-MM
+  period: string; 
   url: string;
   mapping?: {
-    unitCodeCol: string;
-    targetCol?: string; // For Sub/Rev
-    actualCol?: string; // For Sub/Rev
-    // For Productivity
-    g1Col?: string; // < 5tr
-    g2Col?: string; // 5-10tr
-    g3Col?: string; // 10-15tr
-    g4Col?: string; // > 15tr
-    // Diff columns (Comparison with Q4/2025)
+    unitCodeCol?: string;
+    targetCol?: string; 
+    actualCol?: string; 
+    g1Col?: string;
+    g2Col?: string; 
+    g3Col?: string; 
+    g4Col?: string; 
     g1DiffCol?: string; 
     g2DiffCol?: string;
     g3DiffCol?: string;
@@ -35,7 +33,28 @@ interface MobileOpsProps {
   onRefresh: () => void;
 }
 
-// Danh sách thứ tự ưu tiên hiển thị
+interface MobileKpiViewProps {
+    type: 'subscribers' | 'revenue';
+    title: string;
+    currentUser: User;
+    units: Unit[];
+    systemSettings: any;
+    onRefreshParent: () => void;
+}
+
+interface ProductivityViewProps {
+    currentUser: User;
+    units: Unit[];
+    systemSettings: any;
+}
+
+interface MappingSelectProps {
+    label: string;
+    columns: string[];
+    value: string;
+    onChange: (value: string) => void;
+}
+
 const SORT_ORDER = [
     'VNPT Hạ Long', 
     'VNPT Uông Bí', 
@@ -47,14 +66,17 @@ const SORT_ORDER = [
     'VNPT Vân Đôn - Cô Tô'
 ];
 
-const MobileKpiView: React.FC<{
-    type: 'subscribers' | 'revenue',
-    title: string,
-    currentUser: User,
-    units: Unit[],
-    systemSettings: any;
-    onRefreshParent: () => void;
-}> = ({ type, title, currentUser, units, systemSettings, onRefreshParent }) => {
+const MappingSelect: React.FC<MappingSelectProps> = ({label, columns, value, onChange}) => (
+    <div>
+        <label className="text-[10px] font-bold text-slate-500">{label}</label>
+        <select value={value} onChange={e => onChange(e.target.value)} className="w-full border p-2 rounded-md mt-1 text-xs">
+            <option value="">-- Chọn cột --</option>
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+    </div>
+);
+
+const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser, units, systemSettings, onRefreshParent }) => {
     const [activeTab, setActiveTab] = useState('eval');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
     const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
@@ -91,7 +113,7 @@ const MobileKpiView: React.FC<{
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
-                const row = importedData.find(d => String(d[unitCodeCol]) === String(unit.code));
+                const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
                 const target = Number(row?.[targetCol!] || 0);
                 const actual = Number(row?.[actualCol!] || 0);
                 const percent = target > 0 ? Math.round((actual / target) * 100) : 0;
@@ -104,7 +126,6 @@ const MobileKpiView: React.FC<{
             })
             .filter(d => d.target > 0 || d.actual > 0);
 
-        // Sắp xếp theo thứ tự ưu tiên
         return data.sort((a, b) => {
             const indexA = SORT_ORDER.indexOf(a.name);
             const indexB = SORT_ORDER.indexOf(b.name);
@@ -116,10 +137,9 @@ const MobileKpiView: React.FC<{
 
     }, [units, importedData, config]);
 
-    // Cấu hình màu sắc
     const barColors = type === 'revenue' 
-        ? { percent: '#3B82F6', actual: '#F97316', label: '#000000' } // Doanh thu: Percent Xanh dương (#3B82F6), Actual Cam
-        : { percent: '#EAB308', actual: '#0068FF', label: '#000000' }; // Thuê bao: Percent Vàng đậm (#EAB308), Actual Xanh
+        ? { percent: '#3B82F6', actual: '#F97316', label: '#000000' } 
+        : { percent: '#EAB308', actual: '#0068FF', label: '#000000' };
 
     const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
@@ -295,11 +315,7 @@ const MobileKpiView: React.FC<{
     );
 };
 
-const ProductivityView: React.FC<{
-    currentUser: User;
-    units: Unit[];
-    systemSettings: any;
-}> = ({ currentUser, units, systemSettings }) => {
+const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units, systemSettings }) => {
     const [activeTab, setActiveTab] = useState('eval');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
     const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
@@ -334,14 +350,13 @@ const ProductivityView: React.FC<{
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
-                const row = importedData.find(d => String(d[unitCodeCol]) === String(unit.code));
+                const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
                 
                 const g1 = Number(row?.[g1Col!] || 0); // < 5tr
                 const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
                 const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
                 const g4 = Number(row?.[g4Col!] || 0); // > 15tr
                 
-                // Safe number conversion for diff columns
                 const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
                 const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
                 const g3Diff = g3DiffCol ? Number(row?.[g3DiffCol] || 0) : 0;
@@ -360,7 +375,6 @@ const ProductivityView: React.FC<{
             })
             .filter(d => d.total > 0);
 
-        // Sort data
         const sortedData = data.sort((a, b) => {
             const indexA = SORT_ORDER.indexOf(a.name);
             const indexB = SORT_ORDER.indexOf(b.name);
@@ -370,16 +384,42 @@ const ProductivityView: React.FC<{
             return a.name.localeCompare(b.name);
         });
 
-        // Auto Analysis
+        let totalTrends = { g1: 0, g2: 0, g3: 0, g4: 0 };
+        let mostImproved = { name: '...', val: 0 };
+        let mostDeclined = { name: '...', val: 0 };
+        
+        if (sortedData.length > 0) {
+            mostImproved = { name: sortedData[0].name, val: sortedData[0].g4Diff };
+            mostDeclined = { name: sortedData[0].name, val: sortedData[0].g1Diff };
+        }
+
+        sortedData.forEach(d => {
+            totalTrends.g1 += d.g1Diff;
+            totalTrends.g2 += d.g2Diff;
+            totalTrends.g3 += d.g3Diff;
+            totalTrends.g4 += d.g4Diff;
+
+            if (d.g4Diff > mostImproved.val) mostImproved = { name: d.name, val: d.g4Diff };
+            if (d.g1Diff > mostDeclined.val) mostDeclined = { name: d.name, val: d.g1Diff };
+        });
+        
         let bestUnit = { name: '...', val: 0 };
         let worstUnit = { name: '...', val: 0 };
-        
         sortedData.forEach(d => {
-            if (d.g4Percent > bestUnit.val) bestUnit = { name: d.name, val: d.g4Percent };
-            if (d.g1Percent > worstUnit.val) worstUnit = { name: d.name, val: d.g1Percent };
+             if (d.g4Percent > bestUnit.val) bestUnit = { name: d.name, val: d.g4Percent };
+             if (d.g1Percent > worstUnit.val) worstUnit = { name: d.name, val: d.g1Percent };
         });
 
-        return { chartData: sortedData, analysis: { best: bestUnit, worst: worstUnit } };
+        return { 
+            chartData: sortedData, 
+            analysis: { 
+                trends: totalTrends,
+                improved: mostImproved,
+                declined: mostDeclined,
+                bestPercent: bestUnit,
+                worstPercent: worstUnit
+            } 
+        };
     }, [units, importedData, config]);
 
     const handleReadSheet = async () => {
@@ -450,6 +490,23 @@ const ProductivityView: React.FC<{
              else setSelectedMonth(targetMonth);
         } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
     };
+    
+    // Custom label renderer for chart
+    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
+         const { x, y, width, height, value, payload } = props;
+         if (!value) return null;
+         
+         const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
+         const diffText = (diff !== 0 && !isNaN(diff)) ? `(${diff > 0 ? '+' : ''}${diff})` : '';
+         // Shorten label if space is tight: Just value if width < 40
+         const text = width < 40 ? value : `${value} ${diffText}`;
+
+         return (
+             <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
+                 {text}
+             </text>
+         );
+    };
 
     return (
         <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
@@ -476,44 +533,16 @@ const ProductivityView: React.FC<{
                                     <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
                                     
                                     <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444">
-                                        <LabelList dataKey="g1" position="center" content={(props: any) => {
-                                            if (!props || !props.payload) return null;
-                                            const { x, y, width, height, value } = props;
-                                            const diff = props.payload.g1Diff;
-                                            if (!value) return null;
-                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
-                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
-                                        }} />
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#F97316">
-                                        <LabelList dataKey="g2" position="center" content={(props: any) => {
-                                            if (!props || !props.payload) return null;
-                                            const { x, y, width, height, value } = props;
-                                            const diff = props.payload.g2Diff;
-                                            if (!value) return null;
-                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
-                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
-                                        }} />
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308">
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
                                     </Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#84CC16">
-                                        <LabelList dataKey="g3" position="center" content={(props: any) => {
-                                            if (!props || !props.payload) return null;
-                                            const { x, y, width, height, value } = props;
-                                            const diff = props.payload.g3Diff;
-                                            if (!value) return null;
-                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
-                                            return <text x={x + width / 2} y={y + height / 2} fill="#000" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
-                                        }} />
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316">
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#15803D">
-                                        <LabelList dataKey="g4" position="center" content={(props: any) => {
-                                            if (!props || !props.payload) return null;
-                                            const { x, y, width, height, value } = props;
-                                            const diff = props.payload.g4Diff;
-                                            if (!value) return null;
-                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
-                                            return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
-                                        }} />
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6">
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', true)} />
                                     </Bar>
                                 </BarChart>
                              </ResponsiveContainer>
@@ -522,21 +551,60 @@ const ProductivityView: React.FC<{
                             <h4 className="text-xs font-black uppercase text-slate-500 mb-4 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
                             {analysis && (
                                 <div className="space-y-6">
+                                    <div className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm">
+                                        <div className="flex items-center gap-2 text-blue-700 font-bold text-xs mb-3"><TrendingUp size={16}/> Biến động toàn tỉnh (so với Q4/2025)</div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm {'>'} 15tr (G4)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g4 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g4 >= 0 ? <ArrowUpRight size={18}/> : <ArrowDownRight size={18}/>}
+                                                    {Math.abs(analysis.trends.g4)} <span className="text-[9px] text-slate-400 font-normal">nhân sự</span>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm {'<'} 5tr (G1)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g1 <= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g1 >= 0 ? <ArrowUpRight size={18}/> : <ArrowDownRight size={18}/>}
+                                                    {Math.abs(analysis.trends.g1)} <span className="text-[9px] text-slate-400 font-normal">nhân sự</span>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm 10-15tr (G3)</div>
+                                                <div className={`text-sm font-black flex items-center gap-1 ${analysis.trends.g3 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g3 >= 0 ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>}
+                                                    {Math.abs(analysis.trends.g3)}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm 5-10tr (G2)</div>
+                                                <div className={`text-sm font-black flex items-center gap-1 ${analysis.trends.g2 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g2 >= 0 ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>}
+                                                    {Math.abs(analysis.trends.g2)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm">
-                                        <div className="flex items-center gap-2 text-green-700 font-bold text-xs mb-2"><Award size={16}/> Đơn vị hiệu quả nhất</div>
-                                        <p className="text-sm font-black text-slate-800">{analysis.best.name}</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">Tỷ lệ nhân sự lương {'>'} 15tr đạt <span className="font-bold text-green-600">{analysis.best.val.toFixed(1)}%</span>.</p>
+                                        <div className="flex items-center gap-2 text-green-700 font-bold text-xs mb-2"><Award size={16}/> Chuyển dịch tích cực nhất</div>
+                                        <p className="text-sm font-black text-slate-800">{analysis.improved.name}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">
+                                            Nhân sự nhóm {'>'} 15tr tăng thêm: <span className="font-bold text-green-600">+{analysis.improved.val}</span> NS.
+                                        </p>
                                     </div>
-                                    <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
-                                        <div className="flex items-center gap-2 text-red-600 font-bold text-xs mb-2"><AlertCircle size={16}/> Cần lưu ý</div>
-                                        <p className="text-sm font-black text-slate-800">{analysis.worst.name}</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">Tỷ lệ nhân sự lương {'<'} 5tr chiếm tới <span className="font-bold text-red-500">{analysis.worst.val.toFixed(1)}%</span>.</p>
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 italic text-justify leading-relaxed">
-                                        * Biểu đồ thể hiện cơ cấu thu nhập/năng suất của từng địa bàn. Các đơn vị có tỷ lệ màu xanh đậm (G4) cao cho thấy lực lượng lao động chất lượng tốt. Ngược lại, màu đỏ (G1) cảnh báo rủi ro về thu nhập thấp.
-                                    </div>
-                                    <div className="text-[10px] text-blue-600 font-bold italic text-justify leading-relaxed border-t pt-2">
-                                        * Các con số trong ngoặc (↑/↓) thể hiện sự chênh lệch số lượng nhân sự so với Q4/2025.
+                                    
+                                    {analysis.declined.val > 0 && (
+                                        <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
+                                            <div className="flex items-center gap-2 text-red-600 font-bold text-xs mb-2"><TrendingDown size={16}/> Cần lưu ý (Giảm năng suất)</div>
+                                            <p className="text-sm font-black text-slate-800">{analysis.declined.name}</p>
+                                            <p className="text-[10px] text-slate-500 mt-1">
+                                                Nhân sự nhóm {'<'} 5tr tăng thêm: <span className="font-bold text-red-500">+{analysis.declined.val}</span> NS.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <div className="text-[10px] text-slate-400 italic text-justify leading-relaxed pt-2 border-t">
+                                        * Đơn vị có cơ cấu tốt nhất hiện tại (Tỷ lệ G4 cao nhất): <span className="font-bold text-slate-700">{analysis.bestPercent.name} ({analysis.bestPercent.val.toFixed(1)}%)</span>.
                                     </div>
                                 </div>
                             )}
@@ -598,20 +666,5 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
         </div>
     );
 };
-
-const MappingSelect: React.FC<{
-    label: string;
-    columns: string[];
-    value: string;
-    onChange: (value: string) => void;
-}> = ({label, columns, value, onChange}) => (
-    <div>
-        <label className="text-[10px] font-bold text-slate-500">{label}</label>
-        <select value={value} onChange={e => onChange(e.target.value)} className="w-full border p-2 rounded-md mt-1 text-xs">
-            <option value="">-- Chọn cột --</option>
-            {columns.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-    </div>
-);
 
 export default MobileOpsDashboard;
