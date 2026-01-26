@@ -1,20 +1,25 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
-import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw } from 'lucide-react';
+import { Smartphone, Users, TrendingUp, Settings, Loader2, Database, Table, Filter, Save, Import, RefreshCw, Briefcase, Award, AlertCircle } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend } from 'recharts';
 
 interface MobileOpsConfig {
   id: string; 
-  type: 'subscribers' | 'revenue';
+  type: 'subscribers' | 'revenue' | 'productivity';
   period: string; // YYYY-MM
   url: string;
   mapping?: {
     unitCodeCol: string;
-    targetCol: string;
-    actualCol: string;
+    targetCol?: string; // For Sub/Rev
+    actualCol?: string; // For Sub/Rev
+    // For Productivity
+    g1Col?: string; // < 5tr
+    g2Col?: string; // 5-10tr
+    g3Col?: string; // 10-15tr
+    g4Col?: string; // > 15tr
   };
 }
 
@@ -82,8 +87,8 @@ const MobileKpiView: React.FC<{
             .filter(u => u.level > 0)
             .map(unit => {
                 const row = importedData.find(d => String(d[unitCodeCol]) === String(unit.code));
-                const target = Number(row?.[targetCol] || 0);
-                const actual = Number(row?.[actualCol] || 0);
+                const target = Number(row?.[targetCol!] || 0);
+                const actual = Number(row?.[actualCol!] || 0);
                 const percent = target > 0 ? Math.round((actual / target) * 100) : 0;
                 return {
                     name: unit.name,
@@ -98,17 +103,9 @@ const MobileKpiView: React.FC<{
         return data.sort((a, b) => {
             const indexA = SORT_ORDER.indexOf(a.name);
             const indexB = SORT_ORDER.indexOf(b.name);
-            
-            // Nếu cả 2 đều có trong list, sắp xếp theo index
             if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-            
-            // Nếu chỉ a có, a lên trước
             if (indexA !== -1) return -1;
-            
-            // Nếu chỉ b có, b lên trước
             if (indexB !== -1) return 1;
-            
-            // Nếu không, sắp xếp theo tên hoặc logic cũ
             return a.name.localeCompare(b.name);
         });
 
@@ -173,13 +170,11 @@ const MobileKpiView: React.FC<{
     };
 
     const handleQuickSync = async () => {
-        // 1. Kiểm tra quyền
         if (!isAdmin && !systemSettings?.allowKpiSync) {
             alert("Chức năng đồng bộ đang bị khóa bởi Quản trị viên.");
             return;
         }
 
-        // 2. Xác định tháng cần đồng bộ
         let targetMonth = new Date().toISOString().slice(0, 7);
         if (isAdmin) {
             const input = prompt("Nhập tháng muốn đồng bộ (YYYY-MM):", selectedMonth);
@@ -190,17 +185,15 @@ const MobileKpiView: React.FC<{
 
         setIsProcessing(true);
         try {
-            // 3. Lấy cấu hình từ DB (vì user có thể không đang ở tab Config)
             const configId = `${type}_${targetMonth}`;
             const configData = await dbClient.getById('mobile_ops_configs', configId);
 
             if (!configData || !configData.url || !configData.mapping?.unitCodeCol) {
-                alert(`Không tìm thấy cấu hình đồng bộ cho tháng ${targetMonth}. Vui lòng liên hệ Admin cấu hình trước.`);
+                alert(`Không tìm thấy cấu hình đồng bộ cho tháng ${targetMonth}.`);
                 setIsProcessing(false);
                 return;
             }
 
-            // 4. Thực hiện đồng bộ
             let finalUrl = configData.url.trim();
             if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
@@ -213,11 +206,10 @@ const MobileKpiView: React.FC<{
             
             alert(`Đồng bộ thành công dữ liệu tháng ${targetMonth}!`);
             
-            // Nếu đang xem đúng tháng vừa đồng bộ thì load lại
             if (targetMonth === selectedMonth) {
                 fetchData();
             } else if (isAdmin) {
-                setSelectedMonth(targetMonth); // Chuyển view sang tháng vừa đồng bộ
+                setSelectedMonth(targetMonth);
             }
 
         } catch (e) {
@@ -233,17 +225,9 @@ const MobileKpiView: React.FC<{
                 <h3 className={`text-lg font-black tracking-tighter uppercase ${type === 'revenue' ? 'text-orange-600' : 'text-slate-800'}`}>{title}</h3>
                 <div className="flex items-center gap-2">
                     <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
-                    
-                    {/* Nút Đồng bộ nhanh */}
-                    <button 
-                        onClick={handleQuickSync} 
-                        disabled={isProcessing}
-                        className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200 transition-colors" 
-                        title="Đồng bộ dữ liệu"
-                    >
+                    <button onClick={handleQuickSync} disabled={isProcessing} className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200 transition-colors" title="Đồng bộ dữ liệu">
                         {isProcessing ? <Loader2 className="animate-spin" size={14}/> : <RefreshCw size={14}/>}
                     </button>
-
                     {isAdmin && (
                         <div className="flex bg-slate-100 p-1 rounded-xl border ml-2">
                              <button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] font-black ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`} title="Xem biểu đồ"><TrendingUp size={14}/></button>
@@ -288,50 +272,17 @@ const MobileKpiView: React.FC<{
                                     return null;
                                 }} cursor={{fill: 'transparent'}} />
 
-                                <Legend 
-                                    verticalAlign="top" 
-                                    align="center" 
-                                    wrapperStyle={{ paddingBottom: '10px', fontWeight: 'bold', fontSize: '11px' }}
-                                    formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}
-                                />
-                                
-                                {/* Cột Tỷ lệ thực hiện - Dùng trục phải */}
-                                <Bar yAxisId="right" dataKey="percent" fill={barColors.percent} name="Tỷ lệ thực hiện (%)">
-                                    <LabelList dataKey="percent" position="top" formatter={(val: number) => val > 0 ? `${val}%` : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} />
-                                </Bar>
-                                
-                                {/* Cột Thực hiện - Dùng trục trái */}
-                                <Bar yAxisId="left" dataKey="actual" fill={barColors.actual} name="Kết quả thực hiện">
-                                    <LabelList dataKey="actual" position="top" formatter={(val: number) => val > 0 ? val.toLocaleString() : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} />
-                                </Bar>
+                                <Legend verticalAlign="top" align="center" wrapperStyle={{ paddingBottom: '10px', fontWeight: 'bold', fontSize: '11px' }} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>} />
+                                <Bar yAxisId="right" dataKey="percent" fill={barColors.percent} name="Tỷ lệ thực hiện (%)"><LabelList dataKey="percent" position="top" formatter={(val: number) => val > 0 ? `${val}%` : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
+                                <Bar yAxisId="left" dataKey="actual" fill={barColors.actual} name="Kết quả thực hiện"><LabelList dataKey="actual" position="top" formatter={(val: number) => val > 0 ? val.toLocaleString() : ''} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#000' }} /></Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
                 ) : (
                     <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
-                        <div className="space-y-2">
-                             <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label>
-                             <div className="flex gap-2">
-                                <input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/>
-                                <button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">
-                                    {isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc
-                                </button>
-                             </div>
-                        </div>
-                        {sheetColumns.length > 0 && (
-                            <div className="space-y-2">
-                                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label>
-                                 <div className="grid grid-cols-1 gap-4 bg-white p-4 rounded-xl border">
-                                    <MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} />
-                                    <MappingSelect label="Cột Kế hoạch" columns={sheetColumns} value={config.mapping?.targetCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, targetCol: v}})} />
-                                    <MappingSelect label="Cột Thực hiện" columns={sheetColumns} value={config.mapping?.actualCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, actualCol: v}})} />
-                                 </div>
-                            </div>
-                        )}
-                        <div className="flex justify-end gap-3 pt-4 border-t">
-                            <button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button>
-                            <button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button>
-                        </div>
+                        <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
+                        {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label><div className="grid grid-cols-1 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột Kế hoạch" columns={sheetColumns} value={config.mapping?.targetCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, targetCol: v}})} /><MappingSelect label="Cột Thực hiện" columns={sheetColumns} value={config.mapping?.actualCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, actualCol: v}})} /></div></div>)}
+                        <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
                     </div>
                 )}
             </div>
@@ -339,9 +290,220 @@ const MobileKpiView: React.FC<{
     );
 };
 
+const ProductivityView: React.FC<{
+    currentUser: User;
+    units: Unit[];
+    systemSettings: any;
+}> = ({ currentUser, units, systemSettings }) => {
+    const [activeTab, setActiveTab] = useState('eval');
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+    const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
+    const [importedData, setImportedData] = useState<any[]>([]);
+    const [isLoadingData, setIsLoadingData] = useState(true);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [sheetColumns, setSheetColumns] = useState<string[]>([]);
+
+    const isAdmin = currentUser.username === 'admin';
+
+    const fetchData = useCallback(async () => {
+        setIsLoadingData(true);
+        const configId = `productivity_${selectedMonth}`;
+        const dataId = `productivity_${selectedMonth}`;
+        
+        const [configData, importedResult] = await Promise.all([
+            dbClient.getById('mobile_ops_configs', configId),
+            dbClient.getById('mobile_ops_data', dataId)
+        ]);
+
+        setConfig(configData || { type: 'productivity', period: selectedMonth, url: '', mapping: {} });
+        setImportedData(importedResult?.data || []);
+        setIsLoadingData(false);
+    }, [selectedMonth]);
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+
+    const { chartData, analysis } = useMemo(() => {
+        if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
+        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col } = config.mapping;
+        
+        const data = units
+            .filter(u => u.level > 0)
+            .map(unit => {
+                const row = importedData.find(d => String(d[unitCodeCol]) === String(unit.code));
+                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
+                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
+                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
+                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
+                const total = g1 + g2 + g3 + g4;
+                
+                return {
+                    name: unit.name,
+                    g1, g2, g3, g4, total,
+                    // Tính % để sắp xếp hoặc phân tích (không dùng để vẽ trực tiếp vì Recharts stackOffset="expand" tự làm)
+                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
+                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
+                };
+            })
+            .filter(d => d.total > 0);
+
+        // Sort data
+        const sortedData = data.sort((a, b) => {
+            const indexA = SORT_ORDER.indexOf(a.name);
+            const indexB = SORT_ORDER.indexOf(b.name);
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        // Auto Analysis
+        let bestUnit = { name: '...', val: 0 };
+        let worstUnit = { name: '...', val: 0 };
+        
+        sortedData.forEach(d => {
+            if (d.g4Percent > bestUnit.val) bestUnit = { name: d.name, val: d.g4Percent };
+            if (d.g1Percent > worstUnit.val) worstUnit = { name: d.name, val: d.g1Percent };
+        });
+
+        return { chartData: sortedData, analysis: { best: bestUnit, worst: worstUnit } };
+    }, [units, importedData, config]);
+
+    const handleReadSheet = async () => {
+        if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            if (!res.ok) throw new Error("Không thể tải file.");
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            if (rows.length > 0) {
+                setSheetColumns(Object.keys(rows[0]));
+                alert("Đã đọc thành công các cột. Vui lòng ánh xạ.");
+            } else { alert("File rỗng."); }
+        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleSaveConfig = async () => {
+        const configId = `productivity_${selectedMonth}`;
+        await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type: 'productivity', period: selectedMonth });
+        alert("Đã lưu cấu hình!");
+    };
+
+    const handleSyncData = async () => {
+        if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl);
+            const csv = await res.text();
+            const wb = XLSX.read(csv, { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            
+            const dataId = `productivity_${selectedMonth}`;
+            await dbClient.upsert('mobile_ops_data', dataId, { data: rows });
+            setImportedData(rows);
+            alert(`Đồng bộ thành công ${rows.length} dòng.`);
+            setActiveTab('eval');
+        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleQuickSync = async () => {
+        if (!isAdmin && !systemSettings?.allowKpiSync) return alert("Bị khóa bởi Admin.");
+        let targetMonth = selectedMonth;
+        if (isAdmin) {
+             const input = prompt("Nhập tháng (YYYY-MM):", selectedMonth);
+             if(!input || !/^\d{4}-\d{2}$/.test(input)) return;
+             targetMonth = input;
+        }
+        setIsProcessing(true);
+        try {
+             const configId = `productivity_${targetMonth}`;
+             const configData = await dbClient.getById('mobile_ops_configs', configId);
+             if (!configData?.url) return alert("Chưa có cấu hình.");
+             let finalUrl = configData.url.trim().replace('/edit', '/export?format=csv');
+             if(!finalUrl.includes('export?format=csv')) finalUrl += '/export?format=csv';
+
+             const res = await fetch(finalUrl);
+             const wb = XLSX.read(await res.text(), {type:'string'});
+             const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+             await dbClient.upsert('mobile_ops_data', `productivity_${targetMonth}`, {data:rows});
+             alert("Đồng bộ xong!");
+             if (targetMonth === selectedMonth) fetchData();
+             else setSelectedMonth(targetMonth);
+        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
+             <div className="flex justify-between items-center border-b pb-4">
+                <h3 className="text-lg font-black tracking-tighter uppercase text-green-700">Năng suất kênh nội bộ</h3>
+                <div className="flex items-center gap-2">
+                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
+                    <button onClick={handleQuickSync} disabled={isProcessing} className="bg-slate-100 text-slate-600 p-1.5 rounded-xl border hover:bg-slate-200" title="Đồng bộ"><RefreshCw size={14}/></button>
+                    {isAdmin && (<div className="flex bg-slate-100 p-1 rounded-xl border ml-2"><button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={14}/></button><button onClick={() => setActiveTab('config')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Settings size={14}/></button></div>)}
+                </div>
+            </div>
+            
+            <div className="flex-1 min-h-[400px]">
+                {activeTab === 'eval' ? (
+                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
+                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
+                        <div className="lg:col-span-2 h-full">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
+                                    <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
+                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
+                                    <Tooltip formatter={(val: number, name: string, props: any) => { const total = props.payload.total; const pct = ((val/total)*100).toFixed(1); return [`${val} NS (${pct}%)`, name]; }} cursor={{fill: 'transparent'}}/>
+                                    <Legend iconSize={10} wrapperStyle={{fontSize: '10px', fontWeight: 'bold'}}/>
+                                    
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444"><LabelList dataKey="g1" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#F97316"><LabelList dataKey="g2" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#84CC16"><LabelList dataKey="g3" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'black', fontWeight:'bold'}}/></Bar>
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#15803D"><LabelList dataKey="g4" position="center" formatter={(v:number)=>v>0?v:''} style={{fontSize:9, fill:'white', fontWeight:'bold'}}/></Bar>
+                                </BarChart>
+                             </ResponsiveContainer>
+                        </div>
+                        <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
+                            <h4 className="text-xs font-black uppercase text-slate-500 mb-4 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
+                            {analysis && (
+                                <div className="space-y-6">
+                                    <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm">
+                                        <div className="flex items-center gap-2 text-green-700 font-bold text-xs mb-2"><Award size={16}/> Đơn vị hiệu quả nhất</div>
+                                        <p className="text-sm font-black text-slate-800">{analysis.best.name}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Tỷ lệ nhân sự lương {'>'} 15tr đạt <span className="font-bold text-green-600">{analysis.best.val.toFixed(1)}%</span>.</p>
+                                    </div>
+                                    <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
+                                        <div className="flex items-center gap-2 text-red-600 font-bold text-xs mb-2"><AlertCircle size={16}/> Cần lưu ý</div>
+                                        <p className="text-sm font-black text-slate-800">{analysis.worst.name}</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Tỷ lệ nhân sự lương {'<'} 5tr chiếm tới <span className="font-bold text-red-500">{analysis.worst.val.toFixed(1)}%</span>.</p>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 italic text-justify leading-relaxed">
+                                        * Biểu đồ thể hiện cơ cấu thu nhập/năng suất của từng địa bàn. Các đơn vị có tỷ lệ màu xanh đậm (G4) cao cho thấy lực lượng lao động chất lượng tốt. Ngược lại, màu đỏ (G1) cảnh báo rủi ro về thu nhập thấp.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                     </div>
+                ) : (
+                    <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
+                        <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
+                        {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label><div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} /><MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} /><MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} /><MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} /></div></div>)}
+                        <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
     return (
-        <div className="space-y-8 animate-fade-in">
+        <div className="space-y-8 animate-fade-in pb-20">
             <div className="border-b pb-6">
                 <h2 className="text-3xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
                     <Smartphone className="text-blue-600" size={36} /> DASHBOARD CTHĐ DI ĐỘNG
@@ -350,18 +512,13 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = (props) => {
             </div>
             
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <MobileKpiView 
-                    type="subscribers" 
-                    title="Thuê bao di động PTM" 
-                    {...props} 
-                    onRefreshParent={props.onRefresh}
-                />
-                <MobileKpiView 
-                    type="revenue" 
-                    title="Doanh thu PTM" 
-                    {...props} 
-                    onRefreshParent={props.onRefresh}
-                />
+                <MobileKpiView type="subscribers" title="Thuê bao di động PTM" {...props} onRefreshParent={props.onRefresh} />
+                <MobileKpiView type="revenue" title="Doanh thu PTM" {...props} onRefreshParent={props.onRefresh} />
+            </div>
+
+            {/* New Productivity Module */}
+            <div className="mt-8">
+                <ProductivityView {...props} />
             </div>
         </div>
     );
