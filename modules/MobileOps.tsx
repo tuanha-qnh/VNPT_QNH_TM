@@ -341,10 +341,11 @@ const ProductivityView: React.FC<{
                 const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
                 const g4 = Number(row?.[g4Col!] || 0); // > 15tr
                 
-                const g1Diff = Number(row?.[g1DiffCol!] || 0);
-                const g2Diff = Number(row?.[g2DiffCol!] || 0);
-                const g3Diff = Number(row?.[g3DiffCol!] || 0);
-                const g4Diff = Number(row?.[g4DiffCol!] || 0);
+                // Safe number conversion for diff columns
+                const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
+                const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
+                const g3Diff = g3DiffCol ? Number(row?.[g3DiffCol] || 0) : 0;
+                const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
 
                 const total = g1 + g2 + g3 + g4;
                 
@@ -449,14 +450,6 @@ const ProductivityView: React.FC<{
              else setSelectedMonth(targetMonth);
         } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
     };
-    
-    // Formatter cho LabelList để hiển thị (Giá trị + Chênh lệch)
-    const diffFormatter = (value: number, diff: number) => {
-        if (value === 0) return '';
-        if (!diff || diff === 0) return value;
-        const sign = diff > 0 ? '↑' : '↓';
-        return `${value} (${sign}${Math.abs(diff)})`;
-    };
 
     return (
         <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
@@ -484,37 +477,41 @@ const ProductivityView: React.FC<{
                                     
                                     <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444">
                                         <LabelList dataKey="g1" position="center" content={(props: any) => {
+                                            if (!props || !props.payload) return null;
                                             const { x, y, width, height, value } = props;
                                             const diff = props.payload.g1Diff;
                                             if (!value) return null;
-                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
                                             return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
                                         }} />
                                     </Bar>
                                     <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#F97316">
                                         <LabelList dataKey="g2" position="center" content={(props: any) => {
+                                            if (!props || !props.payload) return null;
                                             const { x, y, width, height, value } = props;
                                             const diff = props.payload.g2Diff;
                                             if (!value) return null;
-                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
                                             return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
                                         }} />
                                     </Bar>
                                     <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#84CC16">
                                         <LabelList dataKey="g3" position="center" content={(props: any) => {
+                                            if (!props || !props.payload) return null;
                                             const { x, y, width, height, value } = props;
                                             const diff = props.payload.g3Diff;
                                             if (!value) return null;
-                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
                                             return <text x={x + width / 2} y={y + height / 2} fill="#000" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
                                         }} />
                                     </Bar>
                                     <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#15803D">
                                         <LabelList dataKey="g4" position="center" content={(props: any) => {
+                                            if (!props || !props.payload) return null;
                                             const { x, y, width, height, value } = props;
                                             const diff = props.payload.g4Diff;
                                             if (!value) return null;
-                                            const text = diff ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
+                                            const text = (diff !== undefined && diff !== 0 && !isNaN(diff)) ? `${value} (${diff > 0 ? '↑' : '↓'}${Math.abs(diff)})` : value;
                                             return <text x={x + width / 2} y={y + height / 2} fill="#fff" textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight="bold">{text}</text>;
                                         }} />
                                     </Bar>
