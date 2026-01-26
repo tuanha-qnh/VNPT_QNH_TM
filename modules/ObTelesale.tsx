@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { User } from '../types';
-import { Headset, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, TrendingUp, PhoneOutgoing, Target, Percent, User as UserIcon, Clock, Award, LayoutTemplate, Users } from 'lucide-react';
+import { Headset, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, TrendingUp, PhoneOutgoing, Target, Percent, User as UserIcon, Clock, Award, LayoutTemplate, Users, Edit3 } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, CartesianGrid, Legend, PieChart, Pie, Cell, LabelList, ComposedChart, Line } from 'recharts';
@@ -109,7 +109,7 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
         setGeneralConfig(genConf || { url: '', mapping: {} });
         setGeneralData(genData?.data || []);
         
-        setAgentConfig(agtConf || { url: '', mapping: {} });
+        setAgentConfig(agtConf || { url: '', mapping: {}, manualTargets: {} });
         setAgentData(agtData?.data || []);
 
         setIsLoading(false);
@@ -183,13 +183,21 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
     const processedAgentData = useMemo(() => {
         if (!agentConfig.mapping || agentData.length === 0) return [];
         const m = agentConfig.mapping;
+        const manualTargets = agentConfig.manualTargets || {};
 
         return agentData.map(row => {
              const name = row[m.agent_name] || 'Unknown';
-             // Revenue
-             const r_ckn_t = Number(row[m.rev_ckn_t] || 0); const r_ckn_a = Number(row[m.rev_ckn_a] || 0);
-             const r_ckd_t = Number(row[m.rev_ckd_t] || 0); const r_ckd_a = Number(row[m.rev_ckd_a] || 0);
-             const r_pkg_t = Number(row[m.rev_pkg_t] || 0); const r_pkg_a = Number(row[m.rev_pkg_a] || 0);
+             
+             // Targets from Manual Config
+             const targets = manualTargets[name] || { ckn: 0, ckd: 0, pkg: 0 };
+             const r_ckn_t = Number(targets.ckn || 0);
+             const r_ckd_t = Number(targets.ckd || 0);
+             const r_pkg_t = Number(targets.pkg || 0);
+
+             // Actuals from Import
+             const r_ckn_a = Number(row[m.rev_ckn_a] || 0);
+             const r_ckd_a = Number(row[m.rev_ckd_a] || 0);
+             const r_pkg_a = Number(row[m.rev_pkg_a] || 0);
              
              // Metrics - Direct Rates from CSV
              const ckn_rate = Number(row[m.ckn_rate] || 0);
@@ -273,7 +281,6 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
     };
 
     const handleQuickSync = async () => {
-        // Quick sync both if possible, or prompt user. Simplified to sync both current month configs.
         if (!isAdmin && !systemSettings?.allowKpiSync) return alert("Chức năng bị khóa bởi Admin.");
         if (!confirm("Bạn có muốn đồng bộ lại cả dữ liệu Tổng hợp và ĐTV cho tháng này?")) return;
         
@@ -306,7 +313,27 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
         } catch(e: any) { alert("Lỗi: " + e.message); } finally { setIsProcessing(false); }
     };
 
-    // Component for Select mapping
+    // Helper to populate manual targets from imported data
+    const handlePopulateAgents = () => {
+        if (!agentConfig.mapping?.agent_name) return alert("Vui lòng ánh xạ cột 'Tên Điện thoại viên' trước.");
+        if (agentData.length === 0) return alert("Chưa có dữ liệu ĐTV. Vui lòng đồng bộ dữ liệu trước.");
+        
+        const existingTargets = agentConfig.manualTargets || {};
+        const newTargets = { ...existingTargets };
+        let count = 0;
+
+        agentData.forEach(row => {
+            const name = row[agentConfig.mapping.agent_name];
+            if (name && !newTargets[name]) {
+                newTargets[name] = { ckn: 0, ckd: 0, pkg: 0 };
+                count++;
+            }
+        });
+
+        setAgentConfig({ ...agentConfig, manualTargets: newTargets });
+        alert(`Đã thêm ${count} ĐTV vào bảng kế hoạch.`);
+    };
+
     const MappingSelect = ({ label, field, type }: { label: string, field: string, type: 'general' | 'agent' }) => {
         const currentConfig = type === 'general' ? generalConfig : agentConfig;
         const setConfig = type === 'general' ? setGeneralConfig : setAgentConfig;
@@ -578,20 +605,17 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
                                                 </div>
                                             </div>
                                             
-                                            {/* REVENUE MAPPING (Agent) */}
+                                            {/* REVENUE MAPPING (Agent) - ACTUALS ONLY */}
                                             <div className="bg-white p-4 rounded-xl border space-y-4">
-                                                <h5 className="text-xs font-bold text-blue-600 uppercase border-b pb-2">I. Chỉ tiêu Doanh thu</h5>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <MappingSelect label="CKN - Kế hoạch (VNĐ)" field="rev_ckn_t" type="agent" />
+                                                <h5 className="text-xs font-bold text-blue-600 uppercase border-b pb-2">I. Chỉ tiêu Doanh thu (Map cột Thực hiện)</h5>
+                                                <div className="grid grid-cols-3 gap-4">
                                                     <MappingSelect label="CKN - Thực hiện (VNĐ)" field="rev_ckn_a" type="agent" />
-                                                    <MappingSelect label="CKD - Kế hoạch (VNĐ)" field="rev_ckd_t" type="agent" />
                                                     <MappingSelect label="CKD - Thực hiện (VNĐ)" field="rev_ckd_a" type="agent" />
-                                                    <MappingSelect label="Bán gói - Kế hoạch (VNĐ)" field="rev_pkg_t" type="agent" />
                                                     <MappingSelect label="Bán gói - Thực hiện (VNĐ)" field="rev_pkg_a" type="agent" />
                                                 </div>
                                             </div>
 
-                                            {/* PERFORMANCE MAPPING (Agent) - Simplified as requested */}
+                                            {/* PERFORMANCE MAPPING (Agent) */}
                                             <div className="bg-white p-4 rounded-xl border space-y-4">
                                                 <h5 className="text-xs font-bold text-green-600 uppercase border-b pb-2">II. Hiệu suất & Chuyển đổi (SL Thuê bao)</h5>
                                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -604,6 +628,42 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
                                                     <div className="space-y-3 p-3 bg-slate-50 rounded-xl border">
                                                         <MappingSelect label="Tỷ lệ Bán gói (%)" field="pkg_rate" type="agent" />
                                                     </div>
+                                                </div>
+                                            </div>
+
+                                            {/* MANUAL TARGET TABLE */}
+                                            <div className="bg-white p-4 rounded-xl border space-y-4">
+                                                <div className="flex justify-between items-center border-b pb-2">
+                                                    <h5 className="text-xs font-bold text-purple-600 uppercase">III. Nhập Kế hoạch giao (Theo ĐTV)</h5>
+                                                    <button onClick={handlePopulateAgents} className="text-[10px] bg-slate-100 px-3 py-1.5 rounded-lg hover:bg-slate-200 font-black flex items-center gap-1">
+                                                        <Users size={12}/> Lấy danh sách ĐTV từ dữ liệu Import
+                                                    </button>
+                                                </div>
+                                                <div className="overflow-x-auto max-h-[300px]">
+                                                    <table className="w-full text-xs">
+                                                        <thead className="bg-slate-50 text-slate-500 font-bold">
+                                                            <tr>
+                                                                <th className="p-2 text-left sticky top-0 bg-slate-50 z-10">Tên ĐTV</th>
+                                                                <th className="p-2 text-center sticky top-0 bg-slate-50 z-10 w-[120px]">KH CKN</th>
+                                                                <th className="p-2 text-center sticky top-0 bg-slate-50 z-10 w-[120px]">KH CKD</th>
+                                                                <th className="p-2 text-center sticky top-0 bg-slate-50 z-10 w-[120px]">KH Bán gói</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y">
+                                                            {Object.keys(agentConfig.manualTargets || {}).length === 0 ? (
+                                                                <tr><td colSpan={4} className="p-4 text-center italic text-slate-400">Chưa có danh sách ĐTV. Nhấn nút trên để lấy từ file Import.</td></tr>
+                                                            ) : (
+                                                                Object.keys(agentConfig.manualTargets || {}).sort().map(name => (
+                                                                    <tr key={name}>
+                                                                        <td className="p-2 font-bold">{name}</td>
+                                                                        <td className="p-1"><input type="number" className="w-full border p-1 rounded text-right font-mono" value={agentConfig.manualTargets[name].ckn} onChange={e => setAgentConfig({...agentConfig, manualTargets: {...agentConfig.manualTargets, [name]: {...agentConfig.manualTargets[name], ckn: Number(e.target.value)}}})}/></td>
+                                                                        <td className="p-1"><input type="number" className="w-full border p-1 rounded text-right font-mono" value={agentConfig.manualTargets[name].ckd} onChange={e => setAgentConfig({...agentConfig, manualTargets: {...agentConfig.manualTargets, [name]: {...agentConfig.manualTargets[name], ckd: Number(e.target.value)}}})}/></td>
+                                                                        <td className="p-1"><input type="number" className="w-full border p-1 rounded text-right font-mono" value={agentConfig.manualTargets[name].pkg} onChange={e => setAgentConfig({...agentConfig, manualTargets: {...agentConfig.manualTargets, [name]: {...agentConfig.manualTargets[name], pkg: Number(e.target.value)}}})}/></td>
+                                                                    </tr>
+                                                                ))
+                                                            )}
+                                                        </tbody>
+                                                    </table>
                                                 </div>
                                             </div>
                                         </>
