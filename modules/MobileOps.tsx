@@ -815,13 +815,16 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
     const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
          const { x, y, width, height, value, payload } = props;
          if (!value) return null;
+
+         const total = payload?.total || 0;
+         const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
          
          const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
          const sign = diff > 0 ? '+' : '';
          const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
          
-         // Aggressively show diff if width allows (> 30px), otherwise just value
-         const text = (width > 30) ? `${value} ${diffText}` : `${value}`;
+         // New logic: Show Value and Percentage
+         const text = (width > 40) ? `${value} (${percentage}%)` : `${value}`;
 
          return (
              <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
