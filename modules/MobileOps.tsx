@@ -1,14 +1,14 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
-import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter } from 'lucide-react';
+import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 import * as XLSX from 'xlsx';
-import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, XAxis, YAxis, Tooltip, Bar, LabelList, CartesianGrid, Legend, ReferenceLine, Cell } from 'recharts';
 
 interface MobileOpsConfig {
   id: string; 
-  type: 'subscribers' | 'revenue' | 'productivity';
+  type: 'subscribers' | 'revenue' | 'productivity' | 'quality';
   period: string; 
   url: string;
   mapping?: {
@@ -23,7 +23,16 @@ interface MobileOpsConfig {
     g2DiffCol?: string;
     g3DiffCol?: string;
     g4DiffCol?: string;
+    // Quality Fields
+    psslCol?: string;
+    subProdCol?: string;
+    revProdCol?: string;
   };
+  targets?: {
+      pssl?: number;
+      subProd?: number;
+      revProd?: number;
+  }
 }
 
 interface MobileOpsProps {
@@ -43,6 +52,12 @@ interface MobileKpiViewProps {
 }
 
 interface ProductivityViewProps {
+    currentUser: User;
+    units: Unit[];
+    systemSettings: any;
+}
+
+interface QualityViewProps {
     currentUser: User;
     units: Unit[];
     systemSettings: any;
@@ -307,6 +322,234 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
                     <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
                         <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
                         {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ cột</label><div className="grid grid-cols-1 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột Kế hoạch" columns={sheetColumns} value={config.mapping?.targetCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, targetCol: v}})} /><MappingSelect label="Cột Thực hiện" columns={sheetColumns} value={config.mapping?.actualCol || ''} onChange={(v: string) => setConfig({...config, mapping: {...config.mapping, actualCol: v}})} /></div></div>)}
+                        <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSettings }) => {
+    const [activeTab, setActiveTab] = useState('eval');
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+    const [config, setConfig] = useState<Partial<MobileOpsConfig>>({});
+    const [importedData, setImportedData] = useState<any[]>([]);
+    const [isLoadingData, setIsLoadingData] = useState(true);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [sheetColumns, setSheetColumns] = useState<string[]>([]);
+
+    const isAdmin = currentUser.username === 'admin';
+
+    // Defaults
+    const TARGET_PSSL = config.targets?.pssl || 90;
+    const TARGET_SUB = config.targets?.subProd || 35;
+    const TARGET_REV = config.targets?.revProd || 13.5;
+
+    const fetchData = useCallback(async () => {
+        setIsLoadingData(true);
+        const configId = `quality_${selectedMonth}`;
+        const dataId = `quality_${selectedMonth}`;
+        
+        const [configData, importedResult] = await Promise.all([
+            dbClient.getById('mobile_ops_configs', configId),
+            dbClient.getById('mobile_ops_data', dataId)
+        ]);
+
+        setConfig(configData || { type: 'quality', period: selectedMonth, url: '', mapping: {}, targets: { pssl: 90, subProd: 35, revProd: 13.5 } });
+        setImportedData(importedResult?.data || []);
+        setIsLoadingData(false);
+    }, [selectedMonth]);
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+
+    const processedData = useMemo(() => {
+        if (!config.mapping?.unitCodeCol || importedData.length === 0) return { psslData: [], subData: [], revData: [], evaluation: '' };
+        const { unitCodeCol, psslCol, subProdCol, revProdCol } = config.mapping;
+
+        const baseData = units
+            .filter(u => u.level > 0)
+            .map(unit => {
+                const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
+                return {
+                    name: unit.name,
+                    pssl: Number(row?.[psslCol!] || 0),
+                    sub: Number(row?.[subProdCol!] || 0),
+                    rev: Number(row?.[revProdCol!] || 0),
+                };
+            })
+            .filter(d => d.pssl > 0 || d.sub > 0 || d.rev > 0);
+
+        // Sort Descending for charts
+        const psslData = [...baseData].sort((a,b) => b.pssl - a.pssl);
+        const subData = [...baseData].sort((a,b) => b.sub - a.sub);
+        const revData = [...baseData].sort((a,b) => b.rev - a.rev);
+
+        // Evaluation Text Generation
+        const failedPSSL = psslData.filter(d => d.pssl < TARGET_PSSL).map(d => d.name).join(", ");
+        const failedSub = subData.filter(d => d.sub < TARGET_SUB).map(d => d.name).join(", ");
+        const failedRev = revData.filter(d => d.rev < TARGET_REV).map(d => d.name).join(", ");
+        const bestUnit = psslData.length > 0 ? psslData[0].name : "N/A";
+
+        let evalText = `Dựa trên số liệu tháng ${selectedMonth}, đơn vị dẫn đầu về chất lượng PSSL là ${bestUnit}. `;
+        if (failedPSSL) evalText += `\n- Các đơn vị chưa đạt mục tiêu PSSL (${TARGET_PSSL}%): ${failedPSSL}. `;
+        else evalText += `\n- Tất cả các đơn vị đều đạt mục tiêu PSSL. `;
+        
+        if (failedSub) evalText += `\n- Về năng suất PTTB, các đơn vị cần cải thiện (dưới ${TARGET_SUB} TB): ${failedSub}. `;
+        if (failedRev) evalText += `\n- Về năng suất Doanh thu, các đơn vị chưa đạt mốc ${TARGET_REV} Tr.đ gồm: ${failedRev}.`;
+
+        return { psslData, subData, revData, evaluation: evalText };
+
+    }, [units, importedData, config, TARGET_PSSL, TARGET_SUB, TARGET_REV, selectedMonth]);
+
+    const handleReadSheet = async () => { /* ... Reuse similar logic ... */
+        if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl); const wb = XLSX.read(await res.text(), { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            if (rows.length > 0) { setSheetColumns(Object.keys(rows[0])); alert("Đã đọc tiêu đề cột."); }
+        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    const handleSaveConfig = async () => {
+        const configId = `quality_${selectedMonth}`;
+        await dbClient.upsert('mobile_ops_configs', configId, { ...config, id: configId, type: 'quality', period: selectedMonth });
+        alert("Đã lưu cấu hình!");
+    };
+
+    const handleSyncData = async () => {
+        if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
+        setIsProcessing(true);
+        try {
+            let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
+            const res = await fetch(finalUrl); const wb = XLSX.read(await res.text(), { type: 'string' });
+            const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            await dbClient.upsert('mobile_ops_data', `quality_${selectedMonth}`, { data: rows });
+            setImportedData(rows); alert(`Đồng bộ ${rows.length} dòng thành công.`); setActiveTab('eval');
+        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-[40px] shadow-sm border space-y-6 h-full flex flex-col">
+            <div className="flex justify-between items-center border-b pb-4">
+                <h3 className="text-lg font-black tracking-tighter uppercase text-purple-700">Chất lượng kênh nội bộ</h3>
+                <div className="flex items-center gap-2">
+                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="border-2 rounded-xl px-2 py-1.5 font-bold text-[10px] bg-slate-50 outline-none w-28"/>
+                    {isAdmin && (<div className="flex bg-slate-100 p-1 rounded-xl border ml-2"><button onClick={() => setActiveTab('eval')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'eval' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><TrendingUp size={14}/></button><button onClick={() => setActiveTab('config')} className={`p-1.5 rounded-lg text-[10px] ${activeTab === 'config' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}><Settings size={14}/></button></div>)}
+                </div>
+            </div>
+
+            <div className="flex-1 min-h-[400px]">
+                {activeTab === 'eval' ? (
+                     isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-purple-600"/></div> :
+                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 h-full">
+                         {/* Charts Area */}
+                         <div className="xl:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
+                             {/* Chart 1: PSSL Rate (Horizontal) */}
+                             <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
+                                 <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Tỷ lệ nhân viên PSSL</h4>
+                                 <div className="flex-1 min-h-[250px]">
+                                     <ResponsiveContainer width="100%" height="100%">
+                                         <BarChart layout="vertical" data={processedData.psslData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} opacity={0.5} />
+                                             <XAxis type="number" domain={[0, 100]} hide />
+                                             <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 9, fontWeight: 'bold' }} interval={0} />
+                                             <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
+                                             <ReferenceLine x={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Target: ${TARGET_PSSL}%`, fontSize: 8, fill: 'red' }} />
+                                             <Bar dataKey="pssl" barSize={15}>
+                                                <LabelList dataKey="pssl" position="right" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
+                                                {processedData.psslData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.pssl >= TARGET_PSSL ? '#22c55e' : '#ef4444'} />
+                                                ))}
+                                             </Bar>
+                                         </BarChart>
+                                     </ResponsiveContainer>
+                                 </div>
+                             </div>
+
+                             {/* Chart 2: Subscriber Productivity (Vertical) */}
+                             <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
+                                 <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Năng suất PTTB BQ</h4>
+                                 <div className="flex-1 min-h-[250px]">
+                                     <ResponsiveContainer width="100%" height="100%">
+                                         <BarChart data={processedData.subData} margin={{ top: 20, right: 5, left: -20, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.5} />
+                                             <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                                             <YAxis tick={{ fontSize: 10 }} />
+                                             <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
+                                             <ReferenceLine y={TARGET_SUB} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Mục tiêu: ${TARGET_SUB}`, fontSize: 9, fill: 'red' }} />
+                                             <Bar dataKey="sub" barSize={20}>
+                                                 <LabelList dataKey="sub" position="top" fontSize={9} fontWeight="bold" />
+                                                 {processedData.subData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.sub >= TARGET_SUB ? '#3b82f6' : '#f97316'} />
+                                                ))}
+                                             </Bar>
+                                         </BarChart>
+                                     </ResponsiveContainer>
+                                 </div>
+                             </div>
+
+                             {/* Chart 3: Revenue Productivity (Vertical) */}
+                             <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
+                                 <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Năng suất DT PTM BQ</h4>
+                                 <div className="flex-1 min-h-[250px]">
+                                     <ResponsiveContainer width="100%" height="100%">
+                                         <BarChart data={processedData.revData} margin={{ top: 20, right: 5, left: -20, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.5} />
+                                             <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                                             <YAxis tick={{ fontSize: 10 }} />
+                                             <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
+                                             <ReferenceLine y={TARGET_REV} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Mục tiêu: ${TARGET_REV}`, fontSize: 9, fill: 'red' }} />
+                                             <Bar dataKey="rev" barSize={20}>
+                                                 <LabelList dataKey="rev" position="top" fontSize={9} fontWeight="bold" />
+                                                 {processedData.revData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.rev >= TARGET_REV ? '#8b5cf6' : '#f43f5e'} />
+                                                ))}
+                                             </Bar>
+                                         </BarChart>
+                                     </ResponsiveContainer>
+                                 </div>
+                             </div>
+                         </div>
+                         
+                         {/* Analysis Text Area */}
+                         <div className="bg-purple-50 rounded-2xl p-6 border border-purple-100 flex flex-col">
+                             <div className="flex items-center gap-2 text-purple-700 font-bold text-sm mb-4 border-b border-purple-200 pb-2">
+                                 <ShieldCheck size={18}/> ĐÁNH GIÁ THỰC TRẠNG
+                             </div>
+                             <div className="flex-1 text-sm font-medium text-slate-700 leading-relaxed whitespace-pre-line text-justify overflow-y-auto">
+                                 {processedData.evaluation}
+                             </div>
+                             <div className="mt-4 pt-4 border-t border-purple-200">
+                                 <h5 className="text-[10px] font-black uppercase text-slate-500 mb-2">Mục tiêu điều hành:</h5>
+                                 <div className="space-y-1 text-xs font-bold text-slate-600">
+                                     <div className="flex justify-between"><span>Tỷ lệ PSSL:</span> <span className="text-purple-700">{TARGET_PSSL}%</span></div>
+                                     <div className="flex justify-between"><span>NS PTTB:</span> <span className="text-purple-700">{TARGET_SUB} TB</span></div>
+                                     <div className="flex justify-between"><span>NS Doanh thu:</span> <span className="text-purple-700">{TARGET_REV} Tr.đ</span></div>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                ) : (
+                    <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
+                        <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="space-y-4 col-span-2">
+                                {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu</label><div className="grid grid-cols-2 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột Tỷ lệ PSSL (%)" columns={sheetColumns} value={config.mapping?.psslCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, psslCol: v}})} /><MappingSelect label="Cột NS PTTB (TB)" columns={sheetColumns} value={config.mapping?.subProdCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, subProdCol: v}})} /><MappingSelect label="Cột NS Doanh thu (Tr.đ)" columns={sheetColumns} value={config.mapping?.revProdCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, revProdCol: v}})} /></div></div>)}
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-purple-600">3. Mục tiêu điều hành</label>
+                                <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 space-y-3">
+                                    <div><label className="text-[10px] font-bold text-slate-500">Mục tiêu PSSL (%)</label><input type="number" className="w-full border p-2 rounded-md mt-1 font-bold text-sm" value={config.targets?.pssl || 90} onChange={e => setConfig({...config, targets: {...config.targets, pssl: Number(e.target.value)}})} /></div>
+                                    <div><label className="text-[10px] font-bold text-slate-500">Mục tiêu NS PTTB</label><input type="number" className="w-full border p-2 rounded-md mt-1 font-bold text-sm" value={config.targets?.subProd || 35} onChange={e => setConfig({...config, targets: {...config.targets, subProd: Number(e.target.value)}})} /></div>
+                                    <div><label className="text-[10px] font-bold text-slate-500">Mục tiêu NS Doanh thu</label><input type="number" className="w-full border p-2 rounded-md mt-1 font-bold text-sm" value={config.targets?.revProd || 13.5} onChange={e => setConfig({...config, targets: {...config.targets, revProd: Number(e.target.value)}})} /></div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
                     </div>
                 )}
@@ -612,7 +855,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                         </div>
                         <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
                             <div className="flex items-center justify-between mb-4">
-                                <h4 className="text-xs font-black uppercase text-slate-500 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
+                                <h4 className="text-sm font-black uppercase text-slate-500 flex items-center gap-2"><Briefcase size={14}/> Đánh giá sơ bộ</h4>
                                 <div className="flex items-center bg-white border rounded-lg px-2 py-1">
                                     <Filter size={10} className="text-slate-400 mr-1"/>
                                     <select 
@@ -628,34 +871,34 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                             {analysis && (
                                 <div className="space-y-6">
                                     <div className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm">
-                                        <div className="flex items-center gap-2 text-blue-700 font-bold text-xs mb-3"><TrendingUp size={16}/> Phạm vi: {analysis.scopeName}</div>
+                                        <div className="flex items-center gap-2 text-blue-700 font-bold text-sm mb-3"><TrendingUp size={16}/> Phạm vi: {analysis.scopeName}</div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div>
-                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm {'>'} 15tr (G4)</div>
-                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g4 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g4 >= 0 ? <ArrowUpRight size={18}/> : <ArrowDownRight size={18}/>}
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'>'} 15tr (G4)</div>
+                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g4 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g4 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
                                                     {analysis.trends.g4 > 0 ? '+' : ''}{analysis.trends.g4}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm {'<'} 5tr (G1)</div>
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm {'<'} 5tr (G1)</div>
                                                 {/* G1 Logic: Increase is BAD (Red), Decrease is GOOD (Green) */}
-                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g1 <= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g1 >= 0 ? <ArrowUpRight size={18}/> : <ArrowDownRight size={18}/>}
+                                                <div className={`text-xl font-black flex items-center gap-1 ${analysis.trends.g1 <= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g1 >= 0 ? <ArrowUpRight size={20}/> : <ArrowDownRight size={20}/>}
                                                     {analysis.trends.g1 > 0 ? '+' : ''}{analysis.trends.g1}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm 10-15tr (G3)</div>
-                                                <div className={`text-sm font-black flex items-center gap-1 ${analysis.trends.g3 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g3 >= 0 ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>}
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 10-15tr (G3)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g3 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g3 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
                                                     {analysis.trends.g3 > 0 ? '+' : ''}{analysis.trends.g3}
                                                 </div>
                                             </div>
                                             <div>
-                                                <div className="text-[10px] text-slate-400 uppercase font-black">Nhóm 5-10tr (G2)</div>
-                                                <div className={`text-sm font-black flex items-center gap-1 ${analysis.trends.g2 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {analysis.trends.g2 >= 0 ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>}
+                                                <div className="text-xs text-slate-400 uppercase font-black">Nhóm 5-10tr (G2)</div>
+                                                <div className={`text-lg font-black flex items-center gap-1 ${analysis.trends.g2 >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {analysis.trends.g2 >= 0 ? <ArrowUpRight size={16}/> : <ArrowDownRight size={16}/>}
                                                     {analysis.trends.g2 > 0 ? '+' : ''}{analysis.trends.g2}
                                                 </div>
                                             </div>
@@ -665,18 +908,18 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     {analysisUnit === 'all' && (
                                         <>
                                             <div className="bg-white p-4 rounded-xl border border-green-200 shadow-sm">
-                                                <div className="flex items-center gap-2 text-green-700 font-bold text-xs mb-2"><Award size={16}/> Chuyển dịch tích cực nhất</div>
-                                                <p className="text-sm font-black text-slate-800">{analysis.improved.name}</p>
-                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                <div className="flex items-center gap-2 text-green-700 font-bold text-sm mb-2"><Award size={16}/> Chuyển dịch tích cực nhất</div>
+                                                <p className="text-base font-black text-slate-800">{analysis.improved.name}</p>
+                                                <p className="text-xs text-slate-500 mt-1">
                                                     Nhân sự nhóm {'>'} 15tr tăng thêm: <span className="font-bold text-green-600">+{analysis.improved.val}</span> NS.
                                                 </p>
                                             </div>
                                             
                                             {analysis.declined.val > 0 && (
                                                 <div className="bg-white p-4 rounded-xl border border-red-200 shadow-sm">
-                                                    <div className="flex items-center gap-2 text-red-600 font-bold text-xs mb-2"><TrendingDown size={16}/> Cần lưu ý (Giảm năng suất)</div>
-                                                    <p className="text-sm font-black text-slate-800">{analysis.declined.name}</p>
-                                                    <p className="text-[10px] text-slate-500 mt-1">
+                                                    <div className="flex items-center gap-2 text-red-600 font-bold text-sm mb-2"><TrendingDown size={16}/> Cần lưu ý (Giảm năng suất)</div>
+                                                    <p className="text-base font-black text-slate-800">{analysis.declined.name}</p>
+                                                    <p className="text-xs text-slate-500 mt-1">
                                                         Nhân sự nhóm {'<'} 5tr tăng thêm: <span className="font-bold text-red-500">+{analysis.declined.val}</span> NS.
                                                     </p>
                                                 </div>
@@ -684,7 +927,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                         </>
                                     )}
 
-                                    <div className="text-[10px] text-slate-400 italic text-justify leading-relaxed pt-2 border-t">
+                                    <div className="text-xs text-slate-400 italic text-justify leading-relaxed pt-2 border-t">
                                         * Đơn vị có cơ cấu tốt nhất hiện tại (Tỷ lệ G4 cao nhất): <span className="font-bold text-slate-700">{analysis.bestPercent.name} ({analysis.bestPercent.val.toFixed(1)}%)</span>.
                                     </div>
                                 </div>
@@ -694,29 +937,21 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 ) : (
                     <div className="space-y-6 animate-fade-in p-6 bg-slate-50 rounded-2xl border h-full overflow-y-auto">
                         <div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">1. Link Google Sheet (CSV)</label><div className="flex gap-2"><input value={config.url || ''} onChange={e => setConfig({...config, url: e.target.value})} className="w-full border-2 p-3 rounded-xl bg-white font-mono text-xs"/><button onClick={handleReadSheet} disabled={isProcessing} className="bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">{isProcessing ? <Loader2 className="animate-spin" size={14}/> : <Table size={14}/>} Đọc</button></div></div>
-                        {sheetColumns.length > 0 && (
-                            <div className="space-y-4">
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu chính</label>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border">
-                                        <MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} />
-                                        <MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} />
-                                        <MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} />
-                                        <MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} />
-                                        <MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} />
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-widest text-blue-500">3. Ánh xạ so sánh (Q4/2025)</label>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                        <MappingSelect label="Chênh lệch < 5tr" columns={sheetColumns} value={config.mapping?.g1DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1DiffCol: v}})} />
-                                        <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
-                                        <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
-                                        <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
-                                    </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="space-y-4 col-span-2">
+                                {sheetColumns.length > 0 && (<div className="space-y-2"><label className="text-[10px] font-black uppercase tracking-widest text-slate-500">2. Ánh xạ dữ liệu</label><div className="grid grid-cols-2 gap-4 bg-white p-4 rounded-xl border"><MappingSelect label="Cột Mã Đơn vị" columns={sheetColumns} value={config.mapping?.unitCodeCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, unitCodeCol: v}})} /><MappingSelect label="Cột < 5 triệu" columns={sheetColumns} value={config.mapping?.g1Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1Col: v}})} /><MappingSelect label="Cột 5-10 triệu" columns={sheetColumns} value={config.mapping?.g2Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2Col: v}})} /><MappingSelect label="Cột 10-15 triệu" columns={sheetColumns} value={config.mapping?.g3Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3Col: v}})} /><MappingSelect label="Cột > 15 triệu" columns={sheetColumns} value={config.mapping?.g4Col || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4Col: v}})} /></div></div>)}
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-purple-600">3. Ánh xạ so sánh (Q4/2025)</label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                    <MappingSelect label="Chênh lệch < 5tr" columns={sheetColumns} value={config.mapping?.g1DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1DiffCol: v}})} />
+                                    <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
+                                    <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
+                                    <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
                                 </div>
                             </div>
-                        )}
+                        </div>
                         <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={handleSaveConfig} className="bg-slate-200 text-slate-700 px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Save size={14}/> Lưu</button><button onClick={handleSyncData} disabled={isProcessing} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2"><Import size={14}/> Đồng bộ</button></div>
                     </div>
                 )}
@@ -768,6 +1003,14 @@ const MobileOpsDashboard: React.FC<MobileOpsProps> = ({ currentUser, units, syst
             units={units}
             systemSettings={systemSettings}
         />
+      </div>
+
+      <div className="h-[600px]">
+         <QualityView 
+            currentUser={currentUser}
+            units={units}
+            systemSettings={systemSettings}
+         />
       </div>
     </div>
   );
