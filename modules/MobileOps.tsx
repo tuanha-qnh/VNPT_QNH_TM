@@ -1,5 +1,4 @@
 
-
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { User, Unit } from '../types';
 import { Smartphone, TrendingUp, Settings, Loader2, Table, Save, Import, RefreshCw, Briefcase, Award, ArrowUpRight, ArrowDownRight, TrendingDown, Filter } from 'lucide-react';
@@ -596,16 +595,16 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
                                     <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
                                     
-                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444">
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
                                         <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308">
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
                                         <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
                                     </Bar>
-                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316">
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
                                         <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
                                     </Bar>
-                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6">
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
                                         <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', true)} />
                                     </Bar>
                                 </BarChart>
