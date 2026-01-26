@@ -15,14 +15,23 @@ interface MobileOpsConfig {
     unitCodeCol?: string;
     targetCol?: string; 
     actualCol?: string; 
+    
+    // Productivity Columns
     g1Col?: string;
     g2Col?: string; 
     g3Col?: string; 
     g4Col?: string; 
+    
     g1DiffCol?: string; 
     g2DiffCol?: string;
     g3DiffCol?: string;
     g4DiffCol?: string;
+
+    g1PercentCol?: string; // New: Cột tỷ trọng G1 từ file
+    g2PercentCol?: string; // New: Cột tỷ trọng G2 từ file
+    g3PercentCol?: string; // New: Cột tỷ trọng G3 từ file
+    g4PercentCol?: string; // New: Cột tỷ trọng G4 từ file
+
     // Quality Fields
     psslCol?: string;
     subProdCol?: string;
@@ -466,7 +475,7 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
         else evalText += `\n- Tất cả các đơn vị đều đạt mục tiêu PSSL. `;
         
         if (failedSub) evalText += `\n- Về năng suất PTTB, các đơn vị cần cải thiện (dưới ${TARGET_SUB} TB): ${failedSub}. `;
-        if (failedRev) evalText += `\n- Về năng suất Doanh thu, các đơn vị chưa đạt mốc ${TARGET_REV} Tr.đ gồm: ${failedRev}.`;
+        if (failedRev) evalText += `\n- Về năng suất Doanh thu, các đơn vị cần cải thiện (dưới ${TARGET_REV} Tr.đ gồm: ${failedRev}.`;
 
         return { psslData, subData, revData, evaluation: evalText };
 
@@ -659,17 +668,22 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
 
     const { chartData, analysis } = useMemo(() => {
         if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
-        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
+        const { 
+            unitCodeCol, 
+            g1Col, g2Col, g3Col, g4Col, 
+            g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol,
+            g1PercentCol, g2PercentCol, g3PercentCol, g4PercentCol // Lấy thêm các cột cấu hình tỷ trọng
+        } = config.mapping;
         
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
                 const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
                 
-                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
-                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
-                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
-                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
+                const g1 = Number(row?.[g1Col!] || 0);
+                const g2 = Number(row?.[g2Col!] || 0);
+                const g3 = Number(row?.[g3Col!] || 0);
+                const g4 = Number(row?.[g4Col!] || 0);
                 
                 const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
                 const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
@@ -677,6 +691,22 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
 
                 const total = g1 + g2 + g3 + g4;
+
+                // Lấy giá trị tỷ trọng từ file nếu có, nếu không thì tự tính (fallback)
+                // Lưu ý: Nếu trong file excel là "25%", thư viện xlsx có thể đọc là string "25%" hoặc number 0.25 tùy format.
+                // Ở đây ta giả định người dùng nhập số (ví dụ 25) hoặc chuỗi có thể parse được.
+                const parsePercent = (val: any, fallback: number) => {
+                    if (val === undefined || val === null || val === '') return fallback;
+                    const num = parseFloat(String(val).replace('%', ''));
+                    // Nếu số nhỏ < 1 (ví dụ 0.25) thì nhân 100, nếu lớn hơn 1 (25) thì giữ nguyên.
+                    // Tuy nhiên để an toàn và nhất quán với yêu cầu "lấy từ file", ta sẽ lấy nguyên giá trị số.
+                    return isNaN(num) ? fallback : num;
+                };
+
+                const g1Percent = g1PercentCol ? parsePercent(row?.[g1PercentCol], total > 0 ? (g1 / total) * 100 : 0) : (total > 0 ? (g1 / total) * 100 : 0);
+                const g2Percent = g2PercentCol ? parsePercent(row?.[g2PercentCol], total > 0 ? (g2 / total) * 100 : 0) : (total > 0 ? (g2 / total) * 100 : 0);
+                const g3Percent = g3PercentCol ? parsePercent(row?.[g3PercentCol], total > 0 ? (g3 / total) * 100 : 0) : (total > 0 ? (g3 / total) * 100 : 0);
+                const g4Percent = g4PercentCol ? parsePercent(row?.[g4PercentCol], total > 0 ? (g4 / total) * 100 : 0) : (total > 0 ? (g4 / total) * 100 : 0);
                 
                 return {
                     name: unit.name,
@@ -684,9 +714,8 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                     id: unit.id,
                     g1, g2, g3, g4, 
                     g1Diff, g2Diff, g3Diff, g4Diff,
-                    total,
-                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
-                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
+                    g1Percent, g2Percent, g3Percent, g4Percent, // Pass pre-calculated percents to data
+                    total
                 };
             })
             .filter(d => d.total > 0);
@@ -723,7 +752,6 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             if (targetUnit) {
                 scopeName = targetUnit.name.toUpperCase();
                 trends = { g1: targetUnit.g1Diff, g2: targetUnit.g2Diff, g3: targetUnit.g3Diff, g4: targetUnit.g4Diff };
-                // Local stats (not strictly needed for single unit view but keeping structure)
                 mostImproved = { name: targetUnit.name, val: targetUnit.g4Diff };
                 mostDeclined = { name: targetUnit.name, val: targetUnit.g1Diff };
                 bestUnit = { name: targetUnit.name, val: targetUnit.g4Percent };
@@ -812,19 +840,27 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
     };
     
     // Custom label renderer for chart
-    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
-         const { x, y, width, height, value, payload } = props;
+    // Modified to use pre-calculated percent from payload
+    const renderLabel = (props: any, diffKey: string, percentKey: string, isDark: boolean) => {
+         const { x, y, width, height, value } = props;
+         const payload = props.payload;
+         
          if (!value) return null;
 
-         const total = payload?.total || 0;
-         const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+         // Get percent directly from payload (mapped from sheet)
+         const percent = payload?.[percentKey] || 0;
          
-         const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
-         const sign = diff > 0 ? '+' : '';
-         const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
-         
-         // New logic: Show Value and Percentage
-         const text = (width > 40) ? `${value} (${percentage}%)` : `${value}`;
+         // Logic: Show Value and Percentage (e.g. 15 (25%))
+         // If percent is 0.25 (decimal), format it. If it's 25 (integer), keep it.
+         // Simple heuristic: if < 1 and > 0, multiply by 100.
+         let displayPercent = percent;
+         if (percent > 0 && percent < 1) {
+             displayPercent = Math.round(percent * 100);
+         } else {
+             displayPercent = Math.round(percent);
+         }
+
+         const text = (width > 40) ? `${value} (${displayPercent}%)` : `${value}`;
 
          return (
              <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
@@ -912,16 +948,16 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
                                     
                                     <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
-                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', 'g1Percent', true)} />
                                     </Bar>
                                     <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
-                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', 'g2Percent', false)} />
                                     </Bar>
                                     <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
-                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', 'g3Percent', true)} />
                                     </Bar>
                                     <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
-                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', true)} />
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', 'g4Percent', true)} />
                                     </Bar>
                                 </BarChart>
                              </ResponsiveContainer>
@@ -1022,6 +1058,15 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
+                                </div>
+                            </div>
+                            <div className="space-y-2 col-span-3">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-orange-600">4. Ánh xạ Tỷ trọng (%)</label>
+                                <div className="grid grid-cols-4 gap-4 bg-orange-50 p-4 rounded-xl border border-orange-100">
+                                    <MappingSelect label="Tỷ trọng G1 (%)" columns={sheetColumns} value={config.mapping?.g1PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G2 (%)" columns={sheetColumns} value={config.mapping?.g2PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G3 (%)" columns={sheetColumns} value={config.mapping?.g3PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G4 (%)" columns={sheetColumns} value={config.mapping?.g4PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4PercentCol: v}})} />
                                 </div>
                             </div>
                         </div>
