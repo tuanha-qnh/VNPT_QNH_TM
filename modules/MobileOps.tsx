@@ -23,6 +23,10 @@ interface MobileOpsConfig {
     g2DiffCol?: string;
     g3DiffCol?: string;
     g4DiffCol?: string;
+    g1PercentCol?: string;
+    g2PercentCol?: string;
+    g3PercentCol?: string;
+    g4PercentCol?: string;
     // Quality Fields
     psslCol?: string;
     subProdCol?: string;
@@ -494,19 +498,19 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
                      <div className="flex flex-col gap-6 h-full">
                          {/* Charts Area */}
                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-[300px]">
-                             {/* Chart 1: PSSL Rate (Horizontal) */}
+                             {/* Chart 1: PSSL Rate (Vertical - Updated) */}
                              <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
                                  <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Tỷ lệ nhân viên PSSL</h4>
                                  <div className="flex-1 min-h-[250px]">
                                      <ResponsiveContainer width="100%" height="100%">
-                                         <BarChart layout="vertical" data={processedData.psslData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} opacity={0.5} />
-                                             <XAxis type="number" domain={[0, 100]} hide />
-                                             <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 9, fontWeight: 'bold' }} interval={0} />
+                                         <BarChart data={processedData.psslData} margin={{ top: 20, right: 5, left: -20, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.5} />
+                                             <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                                             <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
                                              <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
-                                             <ReferenceLine x={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Target: ${TARGET_PSSL}%`, fontSize: 8, fill: 'red' }} />
-                                             <Bar dataKey="pssl" barSize={15} fill="#a664f3">
-                                                <LabelList dataKey="pssl" position="right" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
+                                             <ReferenceLine y={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Target: ${TARGET_PSSL}%`, fontSize: 8, fill: 'red' }} />
+                                             <Bar dataKey="pssl" barSize={20} fill="#7693ff">
+                                                <LabelList dataKey="pssl" position="top" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
                                              </Bar>
                                          </BarChart>
                                      </ResponsiveContainer>
@@ -633,17 +637,34 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
 
     const { chartData, analysis } = useMemo(() => {
         if (!config.mapping || !config.mapping.unitCodeCol || importedData.length === 0) return { chartData: [], analysis: null };
-        const { unitCodeCol, g1Col, g2Col, g3Col, g4Col, g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol } = config.mapping;
+        const { 
+            unitCodeCol, 
+            g1Col, g2Col, g3Col, g4Col, 
+            g1DiffCol, g2DiffCol, g3DiffCol, g4DiffCol,
+            g1PercentCol, g2PercentCol, g3PercentCol, g4PercentCol // Lấy thêm các cột cấu hình tỷ trọng
+        } = config.mapping;
         
+        const parsePercent = (val: any, fallback: number) => {
+            if (val === undefined || val === null || val === '') return fallback;
+            // Xử lý dấu phẩy cho locale Việt Nam (25,5 -> 25.5) và loại bỏ %
+            const strVal = String(val).replace(',', '.').replace('%', '').trim();
+            const num = parseFloat(strVal);
+            if (isNaN(num)) return fallback;
+            
+            // Tự động chuẩn hóa: nếu số <= 1 (ví dụ 0.25), tự hiểu là 25%
+            if (num > 0 && num <= 1) return num * 100;
+            return num;
+        };
+
         const data = units
             .filter(u => u.level > 0)
             .map(unit => {
                 const row = importedData.find(d => String(d[unitCodeCol!]) === String(unit.code));
                 
-                const g1 = Number(row?.[g1Col!] || 0); // < 5tr
-                const g2 = Number(row?.[g2Col!] || 0); // 5-10tr
-                const g3 = Number(row?.[g3Col!] || 0); // 10-15tr
-                const g4 = Number(row?.[g4Col!] || 0); // > 15tr
+                const g1 = Number(row?.[g1Col!] || 0);
+                const g2 = Number(row?.[g2Col!] || 0);
+                const g3 = Number(row?.[g3Col!] || 0);
+                const g4 = Number(row?.[g4Col!] || 0);
                 
                 const g1Diff = g1DiffCol ? Number(row?.[g1DiffCol] || 0) : 0;
                 const g2Diff = g2DiffCol ? Number(row?.[g2DiffCol] || 0) : 0;
@@ -651,6 +672,11 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 const g4Diff = g4DiffCol ? Number(row?.[g4DiffCol] || 0) : 0;
 
                 const total = g1 + g2 + g3 + g4;
+
+                const g1Percent = g1PercentCol ? parsePercent(row?.[g1PercentCol], total > 0 ? (g1 / total) * 100 : 0) : (total > 0 ? (g1 / total) * 100 : 0);
+                const g2Percent = g2PercentCol ? parsePercent(row?.[g2PercentCol], total > 0 ? (g2 / total) * 100 : 0) : (total > 0 ? (g2 / total) * 100 : 0);
+                const g3Percent = g3PercentCol ? parsePercent(row?.[g3PercentCol], total > 0 ? (g3 / total) * 100 : 0) : (total > 0 ? (g3 / total) * 100 : 0);
+                const g4Percent = g4PercentCol ? parsePercent(row?.[g4PercentCol], total > 0 ? (g4 / total) * 100 : 0) : (total > 0 ? (g4 / total) * 100 : 0);
                 
                 return {
                     name: unit.name,
@@ -658,9 +684,8 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                     id: unit.id,
                     g1, g2, g3, g4, 
                     g1Diff, g2Diff, g3Diff, g4Diff,
-                    total,
-                    g4Percent: total > 0 ? (g4 / total) * 100 : 0,
-                    g1Percent: total > 0 ? (g1 / total) * 100 : 0
+                    g1Percent, g2Percent, g3Percent, g4Percent, // Pass pre-calculated percents to data
+                    total
                 };
             })
             .filter(d => d.total > 0);
@@ -697,7 +722,6 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             if (targetUnit) {
                 scopeName = targetUnit.name.toUpperCase();
                 trends = { g1: targetUnit.g1Diff, g2: targetUnit.g2Diff, g3: targetUnit.g3Diff, g4: targetUnit.g4Diff };
-                // Local stats (not strictly needed for single unit view but keeping structure)
                 mostImproved = { name: targetUnit.name, val: targetUnit.g4Diff };
                 mostDeclined = { name: targetUnit.name, val: targetUnit.g1Diff };
                 bestUnit = { name: targetUnit.name, val: targetUnit.g4Percent };
@@ -715,6 +739,26 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             } 
         };
     }, [units, importedData, config, analysisUnit]);
+
+    // Custom label renderer
+    const renderLabel = (props: any, diffKey: string, percentKey: string, isDark: boolean) => {
+         const { x, y, width, height, value } = props;
+         const payload = props.payload;
+         
+         if (value === null || value === undefined) return null;
+
+         const percent = payload?.[percentKey] || 0;
+         // Đơn giản hóa: Chỉ cần làm tròn, vì parsePercent đã chuẩn hóa giá trị về thang 100
+         const displayPercent = Math.round(percent);
+
+         const text = (width > 45) ? `${value} (${displayPercent}%)` : `${value}`;
+
+         return (
+             <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
+                 {text}
+             </text>
+         );
+    };
 
     const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
@@ -784,30 +828,10 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
              else setSelectedMonth(targetMonth);
         } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
     };
-    
-    // Custom label renderer for chart
-    const renderLabel = (props: any, diffKey: string, isDark: boolean) => {
-         const { x, y, width, height, value, payload } = props;
-         if (!value) return null;
-         
-         const diff = payload && payload[diffKey] !== undefined ? payload[diffKey] : 0;
-         const sign = diff > 0 ? '+' : '';
-         const diffText = (diff !== 0 && !isNaN(diff)) ? `(${sign}${diff})` : '';
-         
-         // Aggressively show diff if width allows (> 30px), otherwise just value
-         const text = (width > 30) ? `${value} ${diffText}` : `${value}`;
-
-         return (
-             <text x={x + width / 2} y={y + height / 2} fill={isDark ? "#FFFFFF" : "#000000"} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight="bold">
-                 {text}
-             </text>
-         );
-    };
 
     // Custom Tooltip for Chart
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
-            const total = payload[0].payload.total || 0;
             return (
                 <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-xl text-xs min-w-[200px] z-50">
                     <p className="font-black text-slate-800 text-sm mb-2 border-b pb-2">{label}</p>
@@ -817,9 +841,6 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                         const diff = entry.payload[diffKey];
                         const sign = diff > 0 ? '+' : '';
                         
-                        // Percent Calculation
-                        const percentage = total > 0 ? ((entry.value / total) * 100).toFixed(1) : '0';
-
                         // Evaluation Logic
                         let evalText = "Ổn định";
                         let evalColor = "text-slate-500";
@@ -840,9 +861,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                             <div key={index} className="mb-2 last:mb-0">
                                 <div className="flex justify-between items-center gap-4">
                                     <span style={{ color: entry.color }} className="font-bold">{entry.name}:</span>
-                                    <span className="font-black text-slate-700">
-                                        {entry.value} NS <span className="text-[10px] text-slate-500 font-normal">({percentage}%)</span>
-                                    </span>
+                                    <span className="font-black text-slate-700">{entry.value} NS</span>
                                 </div>
                                 <div className="flex justify-between items-center text-[10px] pl-2 mt-0.5">
                                     <span className="text-slate-400">Biến động:</span>
@@ -879,32 +898,29 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                 {activeTab === 'eval' ? (
                      isLoadingData ? <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-green-600"/></div> :
                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
-                        <div className="lg:col-span-2 h-full flex flex-col">
-                             <h4 className="text-sm font-bold text-center text-slate-500 mb-2 uppercase tracking-wider">Phân nhóm NVKD theo mức doanh thu PTM</h4>
-                             <div className="flex-1 min-h-0">
-                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 10, right: 30, left: 20, bottom: 5 }}>
-                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
-                                        <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
-                                        <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
-                                        <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
-                                        <Legend iconSize={16} wrapperStyle={{fontSize: '14px', fontWeight: 'normal', paddingBottom: '20px', color: '#000000'}} formatter={(value) => <span style={{ color: '#000000' }}>{value}</span>}/>
-                                        
-                                        <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#e0412b" barSize={25}>
-                                            <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', true)} />
-                                        </Bar>
-                                        <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#f4ff4b" barSize={25}>
-                                            <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', false)} />
-                                        </Bar>
-                                        <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#6395ff" barSize={25}>
-                                            <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', true)} />
-                                        </Bar>
-                                        <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#63ff6e" barSize={25}>
-                                            <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', false)} />
-                                        </Bar>
-                                    </BarChart>
-                                 </ResponsiveContainer>
-                             </div>
+                        <div className="lg:col-span-2 h-full">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <BarChart layout="vertical" data={chartData} stackOffset="expand" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.5}/>
+                                    <XAxis type="number" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{fontSize: 10}}/>
+                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10, fontWeight: 'bold' }} interval={0}/>
+                                    <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}}/>
+                                    <Legend iconSize={16} wrapperStyle={{fontSize: '20px', fontWeight: '900', paddingBottom: '20px'}}/>
+                                    
+                                    <Bar dataKey="g1" name="< 5tr" stackId="prod" fill="#EF4444" barSize={25}>
+                                        <LabelList dataKey="g1" position="center" content={(props: any) => renderLabel(props, 'g1Diff', 'g1Percent', true)} />
+                                    </Bar>
+                                    <Bar dataKey="g2" name="5-10tr" stackId="prod" fill="#EAB308" barSize={25}>
+                                        <LabelList dataKey="g2" position="center" content={(props: any) => renderLabel(props, 'g2Diff', 'g2Percent', false)} />
+                                    </Bar>
+                                    <Bar dataKey="g3" name="10-15tr" stackId="prod" fill="#F97316" barSize={25}>
+                                        <LabelList dataKey="g3" position="center" content={(props: any) => renderLabel(props, 'g3Diff', 'g3Percent', true)} />
+                                    </Bar>
+                                    <Bar dataKey="g4" name="> 15tr" stackId="prod" fill="#3B82F6" barSize={25}>
+                                        <LabelList dataKey="g4" position="center" content={(props: any) => renderLabel(props, 'g4Diff', 'g4Percent', true)} />
+                                    </Bar>
+                                </BarChart>
+                             </ResponsiveContainer>
                         </div>
                         <div className="bg-slate-50 rounded-2xl p-6 border h-full overflow-y-auto">
                             <div className="flex items-center justify-between mb-4">
@@ -1002,6 +1018,15 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
                                     <MappingSelect label="Chênh lệch 5-10tr" columns={sheetColumns} value={config.mapping?.g2DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch 10-15tr" columns={sheetColumns} value={config.mapping?.g3DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3DiffCol: v}})} />
                                     <MappingSelect label="Chênh lệch > 15tr" columns={sheetColumns} value={config.mapping?.g4DiffCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4DiffCol: v}})} />
+                                </div>
+                            </div>
+                            <div className="space-y-2 col-span-3">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-orange-600">4. Ánh xạ Tỷ trọng (%)</label>
+                                <div className="grid grid-cols-4 gap-4 bg-orange-50 p-4 rounded-xl border border-orange-100">
+                                    <MappingSelect label="Tỷ trọng G1 (%)" columns={sheetColumns} value={config.mapping?.g1PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g1PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G2 (%)" columns={sheetColumns} value={config.mapping?.g2PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g2PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G3 (%)" columns={sheetColumns} value={config.mapping?.g3PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g3PercentCol: v}})} />
+                                    <MappingSelect label="Tỷ trọng G4 (%)" columns={sheetColumns} value={config.mapping?.g4PercentCol || ''} onChange={(v) => setConfig({...config, mapping: {...config.mapping, g4PercentCol: v}})} />
                                 </div>
                             </div>
                         </div>
