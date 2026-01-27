@@ -228,24 +228,6 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
 
     // --- ACTION HANDLERS ---
 
-    const processGoogleSheetUrl = (url: string) => {
-        let finalUrl = url.trim();
-        // Handle common Google Sheet URL patterns
-        if (finalUrl.includes('/edit')) {
-            finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-        } else if (finalUrl.endsWith('/')) {
-             // Case: .../d/KEY/
-             finalUrl = finalUrl + 'export?format=csv';
-        } else if (!finalUrl.includes('export?format=csv') && !finalUrl.includes('pub?')) {
-             // Case: .../d/KEY (no slash)
-             // Check if it looks like a key URL
-             if (finalUrl.includes('/d/')) {
-                 finalUrl = finalUrl + '/export?format=csv';
-             }
-        }
-        return finalUrl;
-    };
-
     const handleReadSheet = async (type: 'general' | 'agent') => {
         const currentConfig = type === 'general' ? generalConfig : agentConfig;
         const setColumns = type === 'general' ? setGeneralColumns : setAgentColumns;
@@ -253,27 +235,19 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
         if (!currentConfig.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
         try {
-            const finalUrl = processGoogleSheetUrl(currentConfig.url);
+            let finalUrl = currentConfig.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
-            if (!res.ok) throw new Error("Không thể tải file (Lỗi mạng hoặc URL sai/chưa share Public).");
+            if (!res.ok) throw new Error("Không thể tải file (Lỗi mạng hoặc URL sai).");
             
             const csv = await res.text();
             
             // Check for HTML response (Login page or error page)
-            if (csv.trim().toLowerCase().startsWith('<!doctype html') || csv.includes('<html') || csv.includes('<script')) {
-                throw new Error("Link không đúng định dạng CSV hoặc chưa được chia sẻ công khai (Public). Vui lòng kiểm tra lại.");
+            if (csv.trim().startsWith('<!DOCTYPE html') || csv.includes('<html')) {
+                throw new Error("Không thể đọc dữ liệu. Có thể do:\n1. File Google Sheet chưa được chia sẻ 'Bất kỳ ai có đường liên kết' (Public).\n2. URL không đúng định dạng.");
             }
 
-            let wb;
-            try {
-                wb = XLSX.read(csv, { type: 'string' });
-            } catch (xlsxError: any) {
-                if (xlsxError.message && xlsxError.message.includes('Invalid HTML')) {
-                     throw new Error("Dữ liệu trả về là HTML thay vì CSV. Vui lòng đảm bảo File Google Sheet đã được chia sẻ công khai (Anyone with the link).");
-                }
-                throw xlsxError;
-            }
-
+            const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             if (rows.length > 0) {
                 setColumns(Object.keys(rows[0]));
@@ -299,27 +273,19 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
         if (!currentConfig.url) return alert("Chưa có cấu hình URL.");
         setIsProcessing(true);
         try {
-            const finalUrl = processGoogleSheetUrl(currentConfig.url);
+            let finalUrl = currentConfig.url.trim();
+            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
             const res = await fetch(finalUrl);
             if (!res.ok) throw new Error("Không thể tải file.");
             
             const csv = await res.text();
             
             // Check for HTML response
-            if (csv.trim().toLowerCase().startsWith('<!doctype html') || csv.includes('<html')) {
-                throw new Error("Link không đúng định dạng CSV hoặc chưa được chia sẻ công khai (Public).");
+            if (csv.trim().startsWith('<!DOCTYPE html') || csv.includes('<html')) {
+                throw new Error("Không thể đọc dữ liệu. Vui lòng kiểm tra quyền truy cập (Share Public) của file Google Sheet.");
             }
 
-            let wb;
-            try {
-                wb = XLSX.read(csv, { type: 'string' });
-            } catch (xlsxError: any) {
-                if (xlsxError.message && xlsxError.message.includes('Invalid HTML')) {
-                     throw new Error("Dữ liệu trả về là HTML. Vui lòng kiểm tra quyền truy cập (Share Public).");
-                }
-                throw xlsxError;
-            }
-
+            const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
             const dataId = `ob_${type}_data_${selectedMonth}`;
@@ -337,13 +303,14 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
         try {
             // Helper function to fetch and check
             const fetchAndCheck = async (url: string) => {
-                const finalUrl = processGoogleSheetUrl(url);
-                const res = await fetch(finalUrl);
-                if (!res.ok) throw new Error(`Lỗi tải file (${res.status}). Kiểm tra quyền truy cập.`);
-                const text = await res.text();
+                let finalUrl = url.trim().replace('/edit', '/export?format=csv');
+                if(!finalUrl.includes('export?format=csv')) finalUrl += '/export?format=csv';
                 
-                if (text.trim().toLowerCase().startsWith('<!doctype html') || text.includes('<html')) {
-                    throw new Error(`File chưa được chia sẻ Public hoặc URL sai.`);
+                const res = await fetch(finalUrl);
+                if (!res.ok) throw new Error(`Lỗi tải file từ URL: ${url}`);
+                const text = await res.text();
+                if (text.trim().startsWith('<!DOCTYPE html') || text.includes('<html')) {
+                    throw new Error(`File Google Sheet chưa được chia sẻ Public (URL: ${url})`);
                 }
                 return text;
             };
@@ -353,13 +320,7 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
             const genConf = await dbClient.getById('ob_telesale_configs', genConfigId);
             if (genConf?.url) {
                 const csv = await fetchAndCheck(genConf.url);
-                let w;
-                try {
-                    w = XLSX.read(csv, {type:'string'});
-                } catch(e: any) {
-                    if (e.message.includes('Invalid HTML')) throw new Error("Lỗi định dạng (HTML). Kiểm tra share Public.");
-                    throw e;
-                }
+                const w = XLSX.read(csv, {type:'string'});
                 const d = XLSX.utils.sheet_to_json(w.Sheets[w.SheetNames[0]]);
                 await dbClient.upsert('ob_telesale_data', `ob_general_data_${selectedMonth}`, {data:d});
                 setGeneralData(d);
@@ -370,13 +331,7 @@ const ObTelesale: React.FC<ObTelesaleProps> = ({ currentUser, systemSettings }) 
             const agtConf = await dbClient.getById('ob_telesale_configs', agtConfigId);
             if (agtConf?.url) {
                 const csv = await fetchAndCheck(agtConf.url);
-                let w;
-                try {
-                    w = XLSX.read(csv, {type:'string'});
-                } catch(e: any) {
-                    if (e.message.includes('Invalid HTML')) throw new Error("Lỗi định dạng (HTML). Kiểm tra share Public.");
-                    throw e;
-                }
+                const w = XLSX.read(csv, {type:'string'});
                 const d = XLSX.utils.sheet_to_json(w.Sheets[w.SheetNames[0]]);
                 await dbClient.upsert('ob_telesale_data', `ob_agent_data_${selectedMonth}`, {data:d});
                 setAgentData(d);
