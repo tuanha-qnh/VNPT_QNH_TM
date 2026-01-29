@@ -104,11 +104,30 @@ const Reports: React.FC<ReportsProps> = ({ tasks, units, users, currentUser, kpi
       if (!t.dateAssigned || !t.dateAssigned.startsWith(selectedMonth)) return false;
       if (currentUser.username === 'admin') return true;
 
-      const assignerUnitId = users.find(u => u.id === t.assignerId)?.unitId;
-      const isRelated = t.assignerId === currentUser.id || t.primaryAssigneeIds.includes(currentUser.id) || t.supportAssigneeIds.includes(currentUser.id);
+      // Check direct involvement
+      const isRelated = t.assignerId === currentUser.id || 
+                        t.primaryAssigneeIds.includes(currentUser.id) || 
+                        t.supportAssigneeIds.includes(currentUser.id);
       
       if (isLeader) {
-        return isRelated || (assignerUnitId && myAccessibleUnits.includes(assignerUnitId));
+        // Nếu là công việc liên quan trực tiếp -> Hiển thị
+        if (isRelated) return true;
+
+        // Nếu là Lãnh đạo -> Xem được công việc được giao cho nhân sự thuộc đơn vị mình quản lý
+        if (t.primaryAssigneeIds.length > 0) {
+            const primaryAssignee = users.find(u => u.id === t.primaryAssigneeIds[0]);
+            if (primaryAssignee && primaryAssignee.unitId && myAccessibleUnits.includes(primaryAssignee.unitId)) {
+                return true;
+            }
+        }
+
+        // Nếu là Lãnh đạo -> Xem được công việc do nhân sự thuộc đơn vị mình quản lý đi giao (giao việc)
+        const assigner = users.find(u => u.id === t.assignerId);
+        if (assigner && assigner.unitId && myAccessibleUnits.includes(assigner.unitId)) {
+            return true;
+        }
+
+        return false;
       }
       return isRelated;
     });
