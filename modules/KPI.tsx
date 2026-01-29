@@ -6,6 +6,17 @@ import { Database, RefreshCw, Settings as SettingsIcon, Users, CheckCircle, PieC
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
 
+const SORT_ORDER = [
+    'VNPT Hạ Long', 
+    'VNPT Uông Bí', 
+    'VNPT Cẩm Phả', 
+    'VNPT Tiên Yên', 
+    'VNPT Móng Cái', 
+    'VNPT Bãi Cháy', 
+    'VNPT Đông Triều', 
+    'VNPT Vân Đôn - Cô Tô'
+];
+
 interface KPIProps {
   users: User[];
   units: Unit[];
@@ -106,7 +117,26 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode, kpiDefinitio
       const t = r.targets[filterKey] || { target: 0, actual: 0 };
       const name = mode === 'personal' ? (users.find(u => u.hrmCode === r.entityId)?.fullName || r.entityId) : (units.find(u => u.code === r.entityId)?.name || r.entityId);
       return { name, actual: t.actual, target: t.target, percent: t.target > 0 ? Math.round((t.actual / t.target) * 100) : 0 };
-    }).sort((a, b) => b.percent - a.percent);
+    });
+    
+    // Sort logic
+    data.sort((a, b) => {
+        if (mode === 'group') {
+             const indexA = SORT_ORDER.indexOf(a.name);
+             const indexB = SORT_ORDER.indexOf(b.name);
+             
+             // Nếu cả 2 đều nằm trong danh sách quy định, sắp xếp theo thứ tự danh sách
+             if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+             // Nếu A có trong danh sách thì lên trước
+             if (indexA !== -1) return -1;
+             // Nếu B có trong danh sách thì lên trước
+             if (indexB !== -1) return 1;
+             // Nếu cả 2 không có trong danh sách, sắp xếp theo % giảm dần (mặc định cũ)
+             return b.percent - a.percent;
+        }
+        // Với KPI cá nhân, giữ nguyên sắp xếp theo tỷ lệ hoàn thành
+        return b.percent - a.percent;
+    });
 
     const totalTarget = data.reduce((sum, item) => sum + item.target, 0);
     const totalActual = data.reduce((sum, item) => sum + item.actual, 0);
