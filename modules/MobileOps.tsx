@@ -81,6 +81,34 @@ const SORT_ORDER = [
     'VNPT Vân Đôn - Cô Tô'
 ];
 
+// Helper function to process Google Sheet URL
+const processGoogleSheetUrl = (url: string) => {
+    let finalUrl = url.trim();
+    if (finalUrl.includes('output=csv') || finalUrl.includes('export?format=csv')) {
+        return finalUrl;
+    }
+    if (finalUrl.includes('/edit')) {
+        return finalUrl.split('/edit')[0] + '/export?format=csv';
+    }
+    if (finalUrl.endsWith('/')) {
+        return finalUrl + 'export?format=csv';
+    }
+    return finalUrl + '/export?format=csv';
+};
+
+// Helper to fetch and validate CSV
+const fetchAndValidateCsv = async (url: string) => {
+    const finalUrl = processGoogleSheetUrl(url);
+    const res = await fetch(finalUrl);
+    if (!res.ok) throw new Error("Không thể tải file (Lỗi mạng hoặc URL chưa Public).");
+    
+    const csv = await res.text();
+    if (csv.trim().toLowerCase().startsWith('<!doctype html') || csv.includes('<html')) {
+        throw new Error("Link không đúng định dạng CSV hoặc chưa được chia sẻ công khai (Public). Vui lòng kiểm tra lại quyền truy cập.");
+    }
+    return csv;
+};
+
 const MappingSelect: React.FC<MappingSelectProps> = ({label, columns, value, onChange}) => (
     <div>
         <label className="text-[10px] font-bold text-slate-500">{label}</label>
@@ -171,11 +199,7 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            if (!res.ok) throw new Error("Không thể tải file.");
-            const csv = await res.text();
+            const csv = await fetchAndValidateCsv(config.url);
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             if (rows.length > 0) {
@@ -184,8 +208,8 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
             } else {
                 alert("File rỗng hoặc không có dữ liệu.");
             }
-        } catch (e) {
-            alert("Lỗi đọc file: " + (e as Error).message);
+        } catch (e: any) {
+            alert("Lỗi đọc file: " + e.message);
         } finally {
             setIsProcessing(false);
         }
@@ -201,10 +225,7 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
         if (!config.url || !config.mapping?.unitCodeCol) return alert("Vui lòng nhập URL và ánh xạ cột Mã đơn vị.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            const csv = await res.text();
+            const csv = await fetchAndValidateCsv(config.url);
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
@@ -213,8 +234,8 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
             setImportedData(rows);
             alert(`Đồng bộ thành công ${rows.length} dòng dữ liệu.`);
             setActiveTab('eval');
-        } catch (e) {
-            alert("Lỗi đồng bộ dữ liệu: " + (e as Error).message);
+        } catch (e: any) {
+            alert("Lỗi đồng bộ dữ liệu: " + e.message);
         } finally {
             setIsProcessing(false);
         }
@@ -245,10 +266,7 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
                 return;
             }
 
-            let finalUrl = configData.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            const csv = await res.text();
+            const csv = await fetchAndValidateCsv(configData.url);
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
@@ -263,8 +281,8 @@ const MobileKpiView: React.FC<MobileKpiViewProps> = ({ type, title, currentUser,
                 setSelectedMonth(targetMonth);
             }
 
-        } catch (e) {
-            alert("Lỗi đồng bộ: " + (e as Error).message);
+        } catch (e: any) {
+            alert("Lỗi đồng bộ: " + e.message);
         } finally {
             setIsProcessing(false);
         }
@@ -449,15 +467,15 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
 
     }, [units, importedData, config, TARGET_PSSL, TARGET_SUB, TARGET_REV, selectedMonth]);
 
-    const handleReadSheet = async () => { /* ... Reuse similar logic ... */
+    const handleReadSheet = async () => {
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl); const wb = XLSX.read(await res.text(), { type: 'string' });
+            const csv = await fetchAndValidateCsv(config.url);
+            const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             if (rows.length > 0) { setSheetColumns(Object.keys(rows[0])); alert("Đã đọc tiêu đề cột."); }
-        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
+        } catch (e: any) { alert("Lỗi đọc file: " + e.message); } finally { setIsProcessing(false); }
     };
 
     const handleSaveConfig = async () => {
@@ -470,12 +488,12 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
         if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim(); if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl); const wb = XLSX.read(await res.text(), { type: 'string' });
+            const csv = await fetchAndValidateCsv(config.url);
+            const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             await dbClient.upsert('mobile_ops_data', `quality_${selectedMonth}`, { data: rows });
             setImportedData(rows); alert(`Đồng bộ ${rows.length} dòng thành công.`); setActiveTab('eval');
-        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+        } catch (e: any) { alert("Lỗi: " + e.message); } finally { setIsProcessing(false); }
     };
 
     return (
@@ -494,19 +512,19 @@ const QualityView: React.FC<QualityViewProps> = ({ currentUser, units, systemSet
                      <div className="flex flex-col gap-6 h-full">
                          {/* Charts Area */}
                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-[300px]">
-                             {/* Chart 1: PSSL Rate (Horizontal) */}
+                             {/* Chart 1: PSSL Rate (Vertical) */}
                              <div className="bg-slate-50 rounded-2xl p-4 border flex flex-col h-full">
                                  <h4 className="text-xs font-black text-slate-700 mb-2 text-center uppercase">Tỷ lệ nhân viên PSSL</h4>
                                  <div className="flex-1 min-h-[250px]">
                                      <ResponsiveContainer width="100%" height="100%">
-                                         <BarChart layout="vertical" data={processedData.psslData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} opacity={0.5} />
-                                             <XAxis type="number" domain={[0, 100]} hide />
-                                             <YAxis dataKey="name" type="category" width={90} tick={{ fontSize: 9, fontWeight: 'bold' }} interval={0} />
+                                         <BarChart data={processedData.psslData} margin={{ top: 20, right: 5, left: -20, bottom: 5 }}>
+                                             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.5} />
+                                             <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} tick={{ fontSize: 9, fontWeight: 'bold' }} />
+                                             <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
                                              <Tooltip contentStyle={{fontSize: '10px'}} cursor={{fill: 'transparent'}} />
-                                             <ReferenceLine x={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Target: ${TARGET_PSSL}%`, fontSize: 8, fill: 'red' }} />
-                                             <Bar dataKey="pssl" barSize={15} fill="#a664f3">
-                                                <LabelList dataKey="pssl" position="right" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
+                                             <ReferenceLine y={TARGET_PSSL} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: `Mục tiêu: ${TARGET_PSSL}%`, fontSize: 9, fill: 'red' }} />
+                                             <Bar dataKey="pssl" barSize={20} fill="#1359ea">
+                                                <LabelList dataKey="pssl" position="top" fontSize={9} fontWeight="bold" formatter={(v:any)=>`${v}%`} />
                                              </Bar>
                                          </BarChart>
                                      </ResponsiveContainer>
@@ -720,18 +738,14 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
         if (!config.url) return alert("Vui lòng nhập URL Google Sheet.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            if (!res.ok) throw new Error("Không thể tải file.");
-            const csv = await res.text();
+            const csv = await fetchAndValidateCsv(config.url);
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             if (rows.length > 0) {
                 setSheetColumns(Object.keys(rows[0]));
                 alert("Đã đọc thành công các cột. Vui lòng ánh xạ.");
             } else { alert("File rỗng."); }
-        } catch (e) { alert("Lỗi đọc file: " + (e as Error).message); } finally { setIsProcessing(false); }
+        } catch (e: any) { alert("Lỗi đọc file: " + e.message); } finally { setIsProcessing(false); }
     };
 
     const handleSaveConfig = async () => {
@@ -744,10 +758,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
         if (!config.url || !config.mapping?.unitCodeCol) return alert("Chưa cấu hình ánh xạ.");
         setIsProcessing(true);
         try {
-            let finalUrl = config.url.trim();
-            if (finalUrl.includes('/edit')) finalUrl = finalUrl.split('/edit')[0] + '/export?format=csv';
-            const res = await fetch(finalUrl);
-            const csv = await res.text();
+            const csv = await fetchAndValidateCsv(config.url);
             const wb = XLSX.read(csv, { type: 'string' });
             const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
             
@@ -756,7 +767,7 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
             setImportedData(rows);
             alert(`Đồng bộ thành công ${rows.length} dòng.`);
             setActiveTab('eval');
-        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+        } catch (e: any) { alert("Lỗi: " + e.message); } finally { setIsProcessing(false); }
     };
 
     const handleQuickSync = async () => {
@@ -772,17 +783,16 @@ const ProductivityView: React.FC<ProductivityViewProps> = ({ currentUser, units,
              const configId = `productivity_${targetMonth}`;
              const configData = await dbClient.getById('mobile_ops_configs', configId);
              if (!configData?.url) return alert("Chưa có cấu hình.");
-             let finalUrl = configData.url.trim().replace('/edit', '/export?format=csv');
-             if(!finalUrl.includes('export?format=csv')) finalUrl += '/export?format=csv';
-
-             const res = await fetch(finalUrl);
-             const wb = XLSX.read(await res.text(), {type:'string'});
+             
+             const csv = await fetchAndValidateCsv(configData.url);
+             const wb = XLSX.read(csv, {type:'string'});
              const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+             
              await dbClient.upsert('mobile_ops_data', `productivity_${targetMonth}`, {data:rows});
              alert("Đồng bộ xong!");
              if (targetMonth === selectedMonth) fetchData();
              else setSelectedMonth(targetMonth);
-        } catch (e) { alert("Lỗi: " + (e as Error).message); } finally { setIsProcessing(false); }
+        } catch (e: any) { alert("Lỗi: " + e.message); } finally { setIsProcessing(false); }
     };
     
     // Custom label renderer for chart
