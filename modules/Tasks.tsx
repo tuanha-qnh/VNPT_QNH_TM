@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Task, TaskStatus, TaskPriority, User, Unit, Role, ExtensionRequest } from '../types';
-import { Plus, Search, X, Edit2, Trash2, Save, Loader2, Timer, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal, UserCheck, Users, CalendarPlus } from 'lucide-react';
+import { Plus, Search, X, Edit2, Trash2, Save, Loader2, Timer, CheckCircle2, AlertTriangle, Clock, Hash, Smartphone, MessageCircle, MoreHorizontal, UserCheck, Users, CalendarPlus, XCircle } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 
 interface TasksProps {
@@ -25,6 +25,34 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     primaryAssigneeIds: [],
     supportAssigneeIds: []
   });
+
+  // Tự động kiểm tra và cập nhật trạng thái Quá hạn
+  useEffect(() => {
+    const checkOverdueTasks = async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const tasksToUpdate = tasks.filter(t => {
+            // Điều kiện: Deadline nhỏ hơn hôm nay VÀ Trạng thái chưa hoàn thành/vướng mắc/quá hạn
+            return t.deadline < today && 
+                   t.status !== TaskStatus.COMPLETED && 
+                   t.status !== TaskStatus.OVERDUE &&
+                   t.status !== TaskStatus.STUCK; // Có thể giữ Stuck nếu muốn, hoặc cho quá hạn luôn
+        });
+
+        if (tasksToUpdate.length > 0) {
+            console.log(`Found ${tasksToUpdate.length} overdue tasks. Updating...`);
+            try {
+                await Promise.all(tasksToUpdate.map(t => dbClient.update('tasks', t.id, { status: TaskStatus.OVERDUE })));
+                onRefresh(); // Refresh lại dữ liệu sau khi update
+            } catch (error) {
+                console.error("Failed to update overdue tasks", error);
+            }
+        }
+    };
+
+    if (tasks.length > 0) {
+        checkOverdueTasks();
+    }
+  }, [tasks]); // Chạy lại khi danh sách tasks thay đổi (hoặc lần đầu load)
 
   // Xác định người dùng có phải lãnh đạo hay không
   const isLeader = [Role.DIRECTOR, Role.VICE_DIRECTOR, Role.MANAGER, Role.VICE_MANAGER].includes(currentUser.title as Role);
@@ -66,7 +94,12 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     if (filterStatus !== 'all') list = list.filter(t => t.status === filterStatus);
     if (filterMonth) list = list.filter(t => t.dateAssigned.startsWith(filterMonth));
     
-    return list;
+    // Sắp xếp: Quá hạn lên đầu, sau đó đến việc mới nhất
+    return list.sort((a, b) => {
+        if (a.status === TaskStatus.OVERDUE && b.status !== TaskStatus.OVERDUE) return -1;
+        if (a.status !== TaskStatus.OVERDUE && b.status === TaskStatus.OVERDUE) return 1;
+        return new Date(b.dateAssigned).getTime() - new Date(a.dateAssigned).getTime();
+    });
   }, [tasks, searchTerm, filterStatus, filterMonth, currentUser, isLeader, myAccessibleUnits, users]);
 
   const statusStyle: Record<TaskStatus, string> = {
@@ -74,7 +107,7 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-600',
     [TaskStatus.COMPLETED]: 'bg-green-100 text-green-600',
     [TaskStatus.NOT_PERFORMED]: 'bg-red-100 text-red-500',
-    [TaskStatus.OVERDUE]: 'bg-red-600 text-white',
+    [TaskStatus.OVERDUE]: 'bg-red-600 text-white shadow-md shadow-red-200',
     [TaskStatus.STUCK]: 'bg-orange-100 text-orange-600'
   };
 
@@ -101,9 +134,12 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
     const comment = prompt("Nội dung báo cáo kết quả thực hiện?");
     if (progress !== null && comment) {
       const newTimeline = [...(task.timeline || []), { date: new Date().toISOString(), comment, progress: Number(progress) }];
-      await dbClient.update('tasks', task.id, { timeline: newTimeline, progress: Number(progress), executionResults: comment });
+      // Nếu tiến độ là 100%, tự động chuyển trạng thái thành Hoàn thành
+      const newStatus = Number(progress) === 100 ? TaskStatus.COMPLETED : task.status;
+      
+      await dbClient.update('tasks', task.id, { timeline: newTimeline, progress: Number(progress), executionResults: comment, status: newStatus });
       onRefresh();
-      if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, timeline: newTimeline, progress: Number(progress), executionResults: comment});
+      if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, timeline: newTimeline, progress: Number(progress), executionResults: comment, status: newStatus});
       alert("Đã cập nhật báo cáo thành công!");
     }
   };
@@ -127,9 +163,12 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
   const approveExtension = async (task: Task) => {
     if (!task.extensionRequest) return;
     const newDeadline = task.extensionRequest.requestedDate;
-    await dbClient.update('tasks', task.id, { deadline: newDeadline, extensionRequest: { ...task.extensionRequest, status: 'approved' } }); 
+    // Khi duyệt gia hạn, nếu trạng thái đang là Overdue thì chuyển về In Progress
+    const newStatus = task.status === TaskStatus.OVERDUE ? TaskStatus.IN_PROGRESS : task.status;
+
+    await dbClient.update('tasks', task.id, { deadline: newDeadline, extensionRequest: { ...task.extensionRequest, status: 'approved' }, status: newStatus }); 
     onRefresh(); 
-    if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, deadline: newDeadline, extensionRequest: {...task.extensionRequest, status: 'approved'}});
+    if (selectedTask?.id === task.id) setSelectedTask({...selectedTask, deadline: newDeadline, extensionRequest: {...task.extensionRequest, status: 'approved'}, status: newStatus});
     alert("Đã phê duyệt gia hạn thời gian thực hiện!"); 
   };
   
@@ -190,56 +229,64 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filteredTasks.map((task, idx) => (
-                <tr key={task.id} className="group hover:bg-blue-50/40 transition-all border-l-4 border-l-transparent hover:border-l-blue-500">
-                  <td className="p-5 font-bold text-slate-500 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.dateAssigned}</td>
-                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                    <div className="flex items-center gap-2 mb-1">
-                      {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> {task.eOfficeNumber}</span>}
-                    </div>
-                    <div className="font-black text-slate-800 text-sm break-words line-clamp-2">{task.name}</div>
-                  </td>
-                  <td className="p-5 font-bold text-slate-700 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.assignerName}</td>
-                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-black text-white overflow-hidden">
-                        {users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar ? ( <img src={users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" /> ) : users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName.charAt(0)}
-                      </div>
-                      <span className="text-xs font-bold text-slate-600 truncate max-w-[100px]">{users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName || 'N/A'}</span>
-                    </div>
-                  </td>
-                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                    <div className="flex -space-x-2">
-                      {task.supportAssigneeIds.slice(0, 3).map(uid => (
-                        <div key={uid} className="w-6 h-6 rounded-full bg-slate-400 border-2 border-white flex items-center justify-center text-[8px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
-                          {users.find(u => u.id === uid)?.fullName.charAt(0)}
+              {filteredTasks.map((task, idx) => {
+                  const isOverdue = task.status === TaskStatus.OVERDUE;
+                  const isCompleted = task.status === TaskStatus.COMPLETED;
+                  
+                  return (
+                    <tr key={task.id} className={`group transition-all border-l-4 ${isOverdue ? 'bg-red-50/50 border-l-red-500 hover:bg-red-100/50' : isCompleted ? 'bg-green-50/30 border-l-green-500 hover:bg-green-100/30' : 'border-l-transparent hover:bg-blue-50/40 hover:border-l-blue-500'}`}>
+                      <td className="p-5 font-bold text-slate-500 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.dateAssigned}</td>
+                      <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                        <div className="flex items-center gap-2 mb-1">
+                          {task.assignmentSource === 'eOffice' && <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[9px] font-black"><Hash size={10}/> {task.eOfficeNumber}</span>}
+                          {isOverdue && <span className="flex items-center gap-1 bg-red-600 text-white px-2 py-0.5 rounded text-[9px] font-black animate-pulse"><AlertTriangle size={10}/> QUÁ HẠN</span>}
                         </div>
-                      ))}
-                      {task.supportAssigneeIds.length > 3 && <div className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[8px] font-black text-slate-500">+{task.supportAssigneeIds.length - 3}</div>}
-                    </div>
-                  </td>
-                  <td className="p-5 font-bold text-slate-500 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.deadline}</td>
-                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-blue-600 h-full" style={{ width: `${task.progress}%` }} />
-                    </div>
-                    <span className="text-[10px] font-black text-blue-600 mt-1 block">{task.progress}%</span>
-                  </td>
-                  <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
-                    <span className={`px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${statusStyle[task.status]}`}>
-                      {task.status}
-                    </span>
-                  </td>
-                  <td className="p-5 text-right">
-                     {(currentUser.username === 'admin' || task.assignerId === currentUser.id) && (
-                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => { e.stopPropagation(); setFormData(task); setShowForm(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Sửa nhanh"><Edit2 size={16} /></button>
-                            <button onClick={async (e) => { e.stopPropagation(); if (confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', task.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16} /></button>
+                        <div className={`font-black text-sm break-words line-clamp-2 ${isOverdue ? 'text-red-700' : isCompleted ? 'text-green-800' : 'text-slate-800'}`}>{task.name}</div>
+                      </td>
+                      <td className="p-5 font-bold text-slate-700 text-xs cursor-pointer" onClick={() => setSelectedTask(task)}>{task.assignerName}</td>
+                      <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-black text-white overflow-hidden">
+                            {users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar ? ( <img src={users.find(u => u.id === task.primaryAssigneeIds[0])?.avatar} className="w-full h-full object-cover" /> ) : users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName.charAt(0)}
+                          </div>
+                          <span className="text-xs font-bold text-slate-600 truncate max-w-[100px]">{users.find(u => u.id === task.primaryAssigneeIds[0])?.fullName || 'N/A'}</span>
                         </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      </td>
+                      <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                        <div className="flex -space-x-2">
+                          {task.supportAssigneeIds.slice(0, 3).map(uid => (
+                            <div key={uid} className="w-6 h-6 rounded-full bg-slate-400 border-2 border-white flex items-center justify-center text-[8px] font-black text-white" title={users.find(u => u.id === uid)?.fullName}>
+                              {users.find(u => u.id === uid)?.fullName.charAt(0)}
+                            </div>
+                          ))}
+                          {task.supportAssigneeIds.length > 3 && <div className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[8px] font-black text-slate-500">+{task.supportAssigneeIds.length - 3}</div>}
+                        </div>
+                      </td>
+                      <td className={`p-5 font-bold text-xs cursor-pointer ${isOverdue ? 'text-red-600' : 'text-slate-500'}`} onClick={() => setSelectedTask(task)}>{task.deadline}</td>
+                      <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                          <div className={`h-full ${isOverdue ? 'bg-red-500' : isCompleted ? 'bg-green-500' : 'bg-blue-600'}`} style={{ width: `${task.progress}%` }} />
+                        </div>
+                        <span className={`text-[10px] font-black mt-1 block ${isOverdue ? 'text-red-600' : isCompleted ? 'text-green-600' : 'text-blue-600'}`}>{task.progress}%</span>
+                      </td>
+                      <td className="p-5 cursor-pointer" onClick={() => setSelectedTask(task)}>
+                        <span className={`px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-wider flex items-center justify-center w-fit gap-1 ${statusStyle[task.status]}`}>
+                          {isCompleted && <CheckCircle2 size={10}/>}
+                          {isOverdue && <XCircle size={10}/>}
+                          {task.status}
+                        </span>
+                      </td>
+                      <td className="p-5 text-right">
+                         {(currentUser.username === 'admin' || task.assignerId === currentUser.id) && (
+                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={(e) => { e.stopPropagation(); setFormData(task); setShowForm(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Sửa nhanh"><Edit2 size={16} /></button>
+                                <button onClick={async (e) => { e.stopPropagation(); if (confirm("Xóa vĩnh viễn công việc này?")) { await dbClient.delete('tasks', task.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16} /></button>
+                            </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+              })}
             </tbody>
           </table>
         </div>
@@ -319,9 +366,12 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
       {selectedTask && (
         <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-[60%] rounded-[48px] shadow-2xl animate-zoom-in flex flex-col max-h-[90vh] overflow-hidden border">
-            <div className="p-8 border-b flex justify-between items-center bg-blue-600 text-white shadow-lg shrink-0">
+            <div className={`p-8 border-b flex justify-between items-center shadow-lg shrink-0 ${selectedTask.status === TaskStatus.OVERDUE ? 'bg-red-600' : 'bg-blue-600'} text-white`}>
               <div className="flex-1 pr-10">
-                <h3 className="text-2xl font-black break-words leading-tight">{selectedTask.name}</h3>
+                <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-2xl font-black break-words leading-tight">{selectedTask.name}</h3>
+                    {selectedTask.status === TaskStatus.OVERDUE && <span className="bg-white text-red-600 px-2 py-0.5 rounded text-[10px] font-black">QUÁ HẠN</span>}
+                </div>
                 <div className="text-[10px] font-bold uppercase opacity-80 tracking-widest mt-2">Giao bởi: {selectedTask.assignerName} | Ngày giao: {selectedTask.dateAssigned}</div>
               </div>
               <div className="flex items-center gap-2">
@@ -391,13 +441,13 @@ const Tasks: React.FC<TasksProps> = ({ tasks, users, units, currentUser, onRefre
                 <div className="space-y-1">
                    <h4 className="text-[10px] font-black text-slate-400 uppercase">Tiến độ (%)</h4>
                    <div className="flex items-center gap-3 pt-3">
-                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${selectedTask.progress}%` }} /></div>
-                      <span className="font-black text-blue-600 text-xs">{selectedTask.progress}%</span>
+                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full transition-all duration-500 ${selectedTask.status === TaskStatus.OVERDUE ? 'bg-red-500' : 'bg-blue-600'}`} style={{ width: `${selectedTask.progress}%` }} /></div>
+                      <span className={`font-black text-xs ${selectedTask.status === TaskStatus.OVERDUE ? 'text-red-500' : 'text-blue-600'}`}>{selectedTask.progress}%</span>
                    </div>
                 </div>
                 <div className="space-y-1">
                    <h4 className="text-[10px] font-black text-slate-400 uppercase">Hạn hoàn thành</h4>
-                   <div className="pt-3 font-black text-red-600 text-sm flex items-center gap-2">
+                   <div className={`pt-3 font-black text-sm flex items-center gap-2 ${selectedTask.status === TaskStatus.OVERDUE ? 'text-red-600' : 'text-slate-800'}`}>
                      <Clock size={16}/> {selectedTask.deadline}
                      {(selectedTask.primaryAssigneeIds.includes(currentUser.id) || selectedTask.supportAssigneeIds.includes(currentUser.id)) && !selectedTask.extensionRequest && (
                        <button onClick={() => handleRequestExtension(selectedTask)} className="ml-2 text-blue-500 hover:text-blue-700 p-2 bg-blue-50 rounded-xl transition-colors" title="Xin gia hạn"><CalendarPlus size={16}/></button>

@@ -96,7 +96,7 @@ export interface PersonalTask {
   name: string;
   content: string;
   deadline: string;
-  status: 'Chưa xử lý' | 'Đang xử lý' | 'Đã hoàn thành';
+  status: 'Chưa xử lý' | 'Đang xử lý' | 'Đã hoàn thành' | 'Quá hạn';
   note: string;
   createdAt: string;
 }

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, PersonalTask } from '../types';
-import { Plus, Trash2, Edit2, CheckCircle2, Circle, Clock, MoreVertical, X, Save, Search, Calendar, StickyNote, Loader2, Filter } from 'lucide-react';
+import { Plus, Trash2, Edit2, CheckCircle2, Circle, Clock, MoreVertical, X, Save, Search, Calendar, StickyNote, Loader2, Filter, AlertCircle, XCircle } from 'lucide-react';
 import { dbClient } from '../utils/firebaseClient';
 
 interface PersonalTasksProps {
@@ -27,7 +27,27 @@ const PersonalTasks: React.FC<PersonalTasksProps> = ({ currentUser }) => {
     try {
       const all = await dbClient.getAll('personal_tasks');
       const filtered = (all as PersonalTask[]).filter(t => t.userId === currentUser.id);
-      setTasks(filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      
+      // Auto-check overdue
+      const today = new Date().toISOString().split('T')[0];
+      const tasksToUpdate = filtered.filter(t => 
+        t.deadline < today && 
+        t.status !== 'Đã hoàn thành' && 
+        t.status !== 'Quá hạn'
+      );
+
+      if (tasksToUpdate.length > 0) {
+        await Promise.all(tasksToUpdate.map(t => dbClient.update('personal_tasks', t.id, { status: 'Quá hạn' })));
+        // Refresh local state without refetching from server again immediately
+        const updatedTasks = filtered.map(t => {
+            if (t.deadline < today && t.status !== 'Đã hoàn thành') return { ...t, status: 'Quá hạn' };
+            return t;
+        });
+        setTasks(updatedTasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) as PersonalTask[]);
+      } else {
+        setTasks(filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      }
+
     } catch (e) {
       console.error(e);
     } finally {
@@ -66,13 +86,19 @@ const PersonalTasks: React.FC<PersonalTasksProps> = ({ currentUser }) => {
       const matchSearch = t.name.toLowerCase().includes(searchTerm.toLowerCase());
       const matchMonth = t.deadline.startsWith(selectedMonth);
       return matchSearch && matchMonth;
+    }).sort((a, b) => {
+         // Sort Overdue to top
+         if (a.status === 'Quá hạn' && b.status !== 'Quá hạn') return -1;
+         if (a.status !== 'Quá hạn' && b.status === 'Quá hạn') return 1;
+         return 0;
     });
   }, [tasks, searchTerm, selectedMonth]);
 
   const statusColors = {
     'Chưa xử lý': 'bg-slate-100 text-slate-500',
     'Đang xử lý': 'bg-blue-100 text-blue-600',
-    'Đã hoàn thành': 'bg-green-100 text-green-600'
+    'Đã hoàn thành': 'bg-green-100 text-green-600',
+    'Quá hạn': 'bg-red-100 text-red-600'
   };
 
   return (
@@ -119,39 +145,45 @@ const PersonalTasks: React.FC<PersonalTasksProps> = ({ currentUser }) => {
                 <tr><td colSpan={5} className="p-20 text-center"><Loader2 className="animate-spin mx-auto text-amber-500" size={40}/></td></tr>
               ) : filteredList.length === 0 ? (
                 <tr><td colSpan={5} className="p-20 text-center text-slate-400 font-bold italic">Không có công việc nào trong tháng này.</td></tr>
-              ) : filteredList.map(task => (
-                <tr key={task.id} className="hover:bg-amber-50/30 transition-all group">
-                  <td className="p-5">
-                     <button 
-                        onClick={async () => {
-                          const nextStatus = task.status === 'Đã hoàn thành' ? 'Chưa xử lý' : 'Đã hoàn thành';
-                          await dbClient.update('personal_tasks', task.id, { status: nextStatus });
-                          fetchTasks();
-                        }}
-                        className={`transition-colors flex items-center gap-2 ${task.status === 'Đã hoàn thành' ? 'text-green-600' : 'text-slate-300 hover:text-amber-500'}`}
-                      >
-                        {task.status === 'Đã hoàn thành' ? <CheckCircle2 size={24}/> : <Circle size={24}/>}
-                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${statusColors[task.status]}`}>{task.status}</span>
-                      </button>
-                  </td>
-                  <td className="p-5">
-                    <div className={`${task.status === 'Đã hoàn thành' ? 'line-through opacity-50' : ''} text-slate-800`}>{task.name}</div>
-                    {task.content && <div className="text-[10px] text-slate-400 mt-1 font-medium">{task.content}</div>}
-                  </td>
-                  <td className="p-5 text-center">
-                    <div className="text-red-500 flex items-center justify-center gap-1"><Clock size={14}/> {task.deadline}</div>
-                  </td>
-                  <td className="p-5">
-                    <span className="text-[11px] text-slate-500 italic max-w-[200px] truncate block">{task.note || '---'}</span>
-                  </td>
-                  <td className="p-5 text-right">
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setFormData(task); setShowForm(true); }} className="p-2 hover:bg-white rounded-xl text-blue-600 shadow-sm border"><Edit2 size={16}/></button>
-                      <button onClick={() => handleDelete(task.id)} className="p-2 hover:bg-white rounded-xl text-red-500 shadow-sm border"><Trash2 size={16}/></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : filteredList.map(task => {
+                const isOverdue = task.status === 'Quá hạn';
+                const isCompleted = task.status === 'Đã hoàn thành';
+                
+                return (
+                  <tr key={task.id} className={`transition-all group border-l-4 ${isOverdue ? 'bg-red-50/50 hover:bg-red-100/50 border-l-red-500' : isCompleted ? 'bg-green-50/30 hover:bg-green-100/30 border-l-green-500' : 'hover:bg-amber-50/30 border-l-transparent'}`}>
+                    <td className="p-5">
+                      <button 
+                          onClick={async () => {
+                            if (task.status === 'Quá hạn') return; // Không đổi trạng thái nhanh nếu đã quá hạn
+                            const nextStatus = task.status === 'Đã hoàn thành' ? 'Chưa xử lý' : 'Đã hoàn thành';
+                            await dbClient.update('personal_tasks', task.id, { status: nextStatus });
+                            fetchTasks();
+                          }}
+                          className={`transition-colors flex items-center gap-2 ${isCompleted ? 'text-green-600' : isOverdue ? 'text-red-600' : 'text-slate-300 hover:text-amber-500'}`}
+                        >
+                          {isCompleted ? <CheckCircle2 size={24}/> : isOverdue ? <XCircle size={24}/> : <Circle size={24}/>}
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${statusColors[task.status]}`}>{task.status}</span>
+                        </button>
+                    </td>
+                    <td className="p-5">
+                      <div className={`${isCompleted ? 'line-through opacity-50' : ''} text-slate-800 ${isOverdue ? 'text-red-700' : ''}`}>{task.name}</div>
+                      {task.content && <div className="text-[10px] text-slate-400 mt-1 font-medium">{task.content}</div>}
+                    </td>
+                    <td className="p-5 text-center">
+                      <div className={`${isOverdue ? 'text-red-600 font-black' : 'text-slate-500'} flex items-center justify-center gap-1`}><Clock size={14}/> {task.deadline}</div>
+                    </td>
+                    <td className="p-5">
+                      <span className="text-[11px] text-slate-500 italic max-w-[200px] truncate block">{task.note || '---'}</span>
+                    </td>
+                    <td className="p-5 text-right">
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setFormData(task); setShowForm(true); }} className="p-2 hover:bg-white rounded-xl text-blue-600 shadow-sm border"><Edit2 size={16}/></button>
+                        <button onClick={() => handleDelete(task.id)} className="p-2 hover:bg-white rounded-xl text-red-500 shadow-sm border"><Trash2 size={16}/></button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -184,6 +216,7 @@ const PersonalTasks: React.FC<PersonalTasksProps> = ({ currentUser }) => {
                     <option value="Chưa xử lý">Chưa xử lý</option>
                     <option value="Đang xử lý">Đang xử lý</option>
                     <option value="Đã hoàn thành">Đã hoàn thành</option>
+                    <option value="Quá hạn">Quá hạn</option>
                   </select>
                 </div>
               </div>
