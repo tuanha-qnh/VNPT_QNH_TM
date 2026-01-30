@@ -13,13 +13,28 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen, toggleSidebar, currentUser }) => {
   const isSystemAdmin = currentUser.username === 'admin';
-  const isUnitAdmin = currentUser.canManageUsers === true;
+  
+  // Kiểm tra quyền truy cập module
+  const hasAccess = (moduleId: string) => {
+    if (isSystemAdmin) return true; // Admin hệ thống thấy tất cả
+    if (moduleId === 'dashboard') return true; // Dashboard luôn hiện
+    
+    // Nếu user chưa được cấu hình allowedModules (user cũ), fallback theo logic cũ:
+    // Mặc định hiện các module cơ bản, ẩn các module quản trị/dashboard chuyên sâu
+    if (!currentUser.allowedModules) {
+        if (moduleId === 'admin') return currentUser.canManageUsers; // Logic cũ cho admin
+        if (['tasks', 'personal-tasks', 'kpi-personal', 'kpi-group', 'reports'].includes(moduleId)) return true;
+        return false; // Mặc định ẩn mobile-ops, ob-telesale với user cũ chưa cấu hình
+    }
+    
+    return currentUser.allowedModules.includes(moduleId);
+  };
 
   const menuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: <LayoutDashboard size={20} /> },
     { id: 'tasks', label: 'Quản lý công việc', icon: <CheckSquare size={20} /> },
     { id: 'personal-tasks', label: 'Công việc cá nhân', icon: <StickyNote size={20} /> },
-    (isSystemAdmin || isUnitAdmin) ? { id: 'admin', label: 'Quản trị nhân sự', icon: <Users size={20} /> } : null,
+    { id: 'admin', label: 'Quản trị nhân sự', icon: <Users size={20} /> },
     { type: 'divider' },
     { id: 'mobile-ops', label: 'Dashboard CTHĐ di động', icon: <Smartphone size={20} /> },
     { id: 'ob-telesale', label: 'Dashboard TTCSKH', icon: <Headset size={20} /> },
@@ -27,7 +42,20 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
     { id: 'kpi-personal', label: 'KPI Cá nhân', icon: <BarChart2 size={20} /> },
     { type: 'divider' },
     { id: 'reports', label: 'Báo cáo & Đánh giá', icon: <BarChartBig size={20} /> },
-  ].filter(Boolean);
+  ].filter(item => {
+      if (!item) return false;
+      if (item.type === 'divider') return true;
+      return hasAccess(item.id!);
+  });
+
+  // Clean up dividers (remove consecutive dividers or dividers at ends)
+  const cleanedMenuItems = menuItems.filter((item, index, arr) => {
+      if (item.type === 'divider') {
+          if (index === 0 || index === arr.length - 1) return false;
+          if (arr[index - 1].type === 'divider') return false;
+      }
+      return true;
+  });
 
   return (
     <div className={`fixed left-0 top-0 h-full bg-[#0f172a] text-white transition-all duration-300 z-50 flex flex-col ${isOpen ? 'w-64' : 'w-16'}`}>
@@ -38,9 +66,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
         </button>
       </div>
 
-      <nav className="flex-1 py-4">
+      <nav className="flex-1 py-4 custom-scrollbar overflow-y-auto">
         <ul>
-          {menuItems.map((item: any, index) => {
+          {cleanedMenuItems.map((item: any, index) => {
             if (item.type === 'divider') {
                 return <li key={`div-${index}`} className="my-2 border-t border-white/10"></li>;
             }
@@ -62,7 +90,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
         </ul>
       </nav>
 
-      <div className="p-4 border-t border-white/10 space-y-2">
+      <div className="p-4 border-t border-white/10 space-y-2 bg-[#0f172a]">
         <button 
           onClick={() => setActiveModule('settings')}
           className={`flex items-center text-gray-400 hover:text-white transition-colors w-full px-4 py-2 rounded ${activeModule === 'settings' ? 'bg-white/10 text-white' : ''}`}
@@ -74,7 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule, isOpen
         
         {isOpen && (
             <div className="px-4 text-[10px] text-gray-500 text-center pt-2 font-bold uppercase tracking-widest">
-                v1.9.5 Secure
+                v1.9.6 Secure
             </div>
         )}
       </div>

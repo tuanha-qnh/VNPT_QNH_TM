@@ -33,6 +33,7 @@ export interface User {
   avatar?: string;
   canManageUsers?: boolean; // Quyền SubAdmin
   accessibleUnitIds?: string[]; // Danh sách ID đơn vị được phép xem dữ liệu
+  allowedModules?: string[]; // Danh sách ID module được phép truy cập
 }
 
 export enum TaskStatus {

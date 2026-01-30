@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Unit, User, Role } from '../types';
-import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye, Info, LayoutGrid, GitMerge, Users2, FileSpreadsheet, KeyRound, CheckSquare } from 'lucide-react';
+import { Plus, Edit2, Trash2, Building, Save, X, ChevronRight, ChevronDown, Loader2, Search, Download, ShieldCheck, UploadCloud, Eye, Info, LayoutGrid, GitMerge, Users2, FileSpreadsheet, KeyRound, CheckSquare, Layers } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { dbClient } from '../utils/firebaseClient';
 import md5 from 'md5';
@@ -12,6 +12,17 @@ interface AdminProps {
   currentUser: User;
   onRefresh: () => void;
 }
+
+const MODULE_LIST = [
+    { id: 'tasks', label: 'Quản lý Công việc' },
+    { id: 'personal-tasks', label: 'Công việc cá nhân' },
+    { id: 'admin', label: 'Quản trị nhân sự' },
+    { id: 'mobile-ops', label: 'Dashboard CTHĐ di động' },
+    { id: 'ob-telesale', label: 'Dashboard TTCSKH' },
+    { id: 'kpi-group', label: 'KPI tập thể' },
+    { id: 'kpi-personal', label: 'KPI cá nhân' },
+    { id: 'reports', label: 'Báo cáo & Đánh giá' },
+];
 
 const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<'units' | 'users'>('users');
@@ -94,7 +105,14 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   const handleOpenAddModal = () => {
     if (activeTab === 'users') {
       setEditingItem(null);
-      setFormData({ unitId: currentUser.unitId, title: Role.STAFF, accessibleUnitIds: [currentUser.unitId], canManageUsers: false, password: '123' });
+      setFormData({ 
+          unitId: currentUser.unitId, 
+          title: Role.STAFF, 
+          accessibleUnitIds: [currentUser.unitId], 
+          canManageUsers: false, 
+          password: '123',
+          allowedModules: ['tasks', 'personal-tasks', 'kpi-personal', 'reports'] // Default modules
+      });
     } else {
       const rootUnit = units.find(u => u.level === 0 || u.code === 'VNPT_QN');
       setEditingItem(null);
@@ -116,7 +134,18 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
       } else {
         if (!formData.fullName || !formData.hrmCode || !formData.username) throw new Error("Vui lòng nhập đủ thông tin nhân sự.");
         const finalUnitId = (isSubAdmin && !isSystemAdmin) ? currentUser.unitId : (formData.unitId || currentUser.unitId);
-        const payload = { ...formData, unitId: finalUnitId, password: editingItem ? editingItem.password : md5(formData.password || '123'), isFirstLogin: editingItem ? editingItem.isFirstLogin : true, accessibleUnitIds: formData.accessibleUnitIds && formData.accessibleUnitIds.length > 0 ? formData.accessibleUnitIds : [finalUnitId] };
+        
+        // Ensure canManageUsers matches the 'admin' module permission
+        const updatedCanManageUsers = formData.allowedModules?.includes('admin') || formData.canManageUsers;
+
+        const payload = { 
+            ...formData, 
+            unitId: finalUnitId, 
+            password: editingItem ? editingItem.password : md5(formData.password || '123'), 
+            isFirstLogin: editingItem ? editingItem.isFirstLogin : true, 
+            accessibleUnitIds: formData.accessibleUnitIds && formData.accessibleUnitIds.length > 0 ? formData.accessibleUnitIds : [finalUnitId],
+            canManageUsers: updatedCanManageUsers
+        };
         await dbClient.upsert('users', id, payload);
       }
       setIsModalOpen(false);
@@ -155,7 +184,18 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         for (const row of data) {
           const unit = units.find(u => u.code === row["Mã đơn vị"]);
           if (unit && row["Họ và tên"] && row["Mã HRM"] && row["Username"]) {
-            await dbClient.upsert(`user_imp_${row["Mã HRM"]}`, 'users', { fullName: row["Họ và tên"], hrmCode: row["Mã HRM"], username: row["Username"], password: md5(String(row["Mật khẩu"] || '123')), title: row["Chức danh"], unitId: unit.id, canManageUsers: String(row["Là SubAdmin (Yes/No)"]).toLowerCase() === 'yes', isFirstLogin: true, accessibleUnitIds: [unit.id] });
+            await dbClient.upsert(`user_imp_${row["Mã HRM"]}`, 'users', { 
+                fullName: row["Họ và tên"], 
+                hrmCode: row["Mã HRM"], 
+                username: row["Username"], 
+                password: md5(String(row["Mật khẩu"] || '123')), 
+                title: row["Chức danh"], 
+                unitId: unit.id, 
+                canManageUsers: String(row["Là SubAdmin (Yes/No)"]).toLowerCase() === 'yes', 
+                isFirstLogin: true, 
+                accessibleUnitIds: [unit.id],
+                allowedModules: ['tasks', 'personal-tasks', 'kpi-personal', 'reports'] // Default modules for imported users
+            });
           }
         }
         alert("Import hoàn tất!"); onRefresh();
@@ -180,9 +220,83 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
           </div>
           {canModify && (<div className="flex gap-2">{activeTab === 'users' && (<><button onClick={downloadTemplate} className="bg-slate-100 text-slate-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-slate-200"><Download size={16}/> File mẫu</button><label className="bg-green-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-green-700 cursor-pointer shadow-lg shadow-green-100"><FileSpreadsheet size={16}/> Import Excel<input type="file" hidden accept=".xlsx, .xls" onChange={handleImportExcel} /></label></>)}<button onClick={handleOpenAddModal} className="bg-blue-600 text-white px-8 py-2.5 rounded-xl text-xs font-black uppercase shadow-lg shadow-blue-100 flex items-center gap-2 hover:bg-blue-700 transition-all"><Plus size={18}/> {activeTab === 'users' ? 'Thêm nhân sự' : 'Thêm đơn vị'}</button></div>)}
         </div>
-        <div className="flex-1 overflow-auto">{activeTab === 'units' ? (<div className="p-6"><div className="text-xs italic text-slate-400 p-4 bg-slate-50 rounded-xl mb-4">Mẹo: Kéo và thả một đơn vị vào đơn vị khác để thay đổi cơ cấu. Đơn vị có nhân sự sẽ không thể di chuyển.</div>{unitTree.map(u => <UnitNode key={u.id} item={u} level={0} />)}</div>) : (<table className="w-full text-sm text-left"><thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest sticky top-0 z-10"><tr><th className="p-4 border-b">Họ và tên</th><th className="p-4 border-b">Mã HRM / User</th><th className="p-4 border-b">Chức danh</th><th className="p-4 border-b">Đơn vị gốc</th><th className="p-4 border-b text-right">Thao tác</th></tr></thead><tbody className="divide-y">{filteredUsers.map(user => (<tr key={user.id} className="hover:bg-blue-50/30 transition-colors group"><td className="p-4"><div className="flex items-center gap-3"><div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-black border uppercase overflow-hidden">{user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" /> : user.fullName.charAt(0)}</div><div><div className="font-bold text-slate-800">{user.fullName}</div><div className="flex gap-1 mt-1">{user.canManageUsers && <span className="text-[8px] bg-blue-600 text-white px-1 py-0.5 rounded font-black uppercase">SubAdmin</span>}</div></div></div></td><td className="p-4"><div className="text-xs font-bold text-slate-400">{user.hrmCode}</div><div className="text-blue-600 font-bold">@{user.username}</div></td><td className="p-4 text-xs font-bold text-slate-500">{user.title}</td><td className="p-4 text-xs text-slate-400 font-bold">{units.find(u => u.id === user.unitId)?.name || 'N/A'}</td><td className="p-4 text-right">{(isSystemAdmin || (isSubAdmin && user.unitId === currentUser.unitId)) && (<div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditingItem(user); setFormData({ ...user, accessibleUnitIds: user.accessibleUnitIds || [user.unitId] }); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Chỉnh sửa"><Edit2 size={16}/></button>{user.username !== 'admin' && <button onClick={async () => { if(confirm("Xóa?")) { await dbClient.delete('users', user.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16}/></button>}</div>)}</td></tr>))}</tbody></table>)}</div>
+        <div className="flex-1 overflow-auto">{activeTab === 'units' ? (<div className="p-6"><div className="text-xs italic text-slate-400 p-4 bg-slate-50 rounded-xl mb-4">Mẹo: Kéo và thả một đơn vị vào đơn vị khác để thay đổi cơ cấu. Đơn vị có nhân sự sẽ không thể di chuyển.</div>{unitTree.map(u => <UnitNode key={u.id} item={u} level={0} />)}</div>) : (<table className="w-full text-sm text-left"><thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest sticky top-0 z-10"><tr><th className="p-4 border-b">Họ và tên</th><th className="p-4 border-b">Mã HRM / User</th><th className="p-4 border-b">Chức danh</th><th className="p-4 border-b">Đơn vị gốc</th><th className="p-4 border-b text-right">Thao tác</th></tr></thead><tbody className="divide-y">{filteredUsers.map(user => (<tr key={user.id} className="hover:bg-blue-50/30 transition-colors group"><td className="p-4"><div className="flex items-center gap-3"><div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-black border uppercase overflow-hidden">{user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" /> : user.fullName.charAt(0)}</div><div><div className="font-bold text-slate-800">{user.fullName}</div><div className="flex gap-1 mt-1">{user.canManageUsers && <span className="text-[8px] bg-blue-600 text-white px-1 py-0.5 rounded font-black uppercase">SubAdmin</span>}</div></div></div></td><td className="p-4"><div className="text-xs font-bold text-slate-400">{user.hrmCode}</div><div className="text-blue-600 font-bold">@{user.username}</div></td><td className="p-4 text-xs font-bold text-slate-500">{user.title}</td><td className="p-4 text-xs text-slate-400 font-bold">{units.find(u => u.id === user.unitId)?.name || 'N/A'}</td><td className="p-4 text-right">{(isSystemAdmin || (isSubAdmin && user.unitId === currentUser.unitId)) && (<div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => { setEditingItem(user); setFormData({ ...user, accessibleUnitIds: user.accessibleUnitIds || [user.unitId], allowedModules: user.allowedModules || ['tasks', 'personal-tasks', 'kpi-personal', 'reports'] }); setIsModalOpen(true); }} className="p-2 hover:bg-blue-100 rounded-lg text-blue-600" title="Chỉnh sửa"><Edit2 size={16}/></button>{user.username !== 'admin' && <button onClick={async () => { if(confirm("Xóa?")) { await dbClient.delete('users', user.id); onRefresh(); }}} className="p-2 hover:bg-red-100 rounded-lg text-red-500" title="Xóa"><Trash2 size={16}/></button>}</div>)}</td></tr>))}</tbody></table>)}</div>
       </div>
-      {isModalOpen && (<div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-white rounded-[40px] w-full max-w-4xl shadow-2xl overflow-hidden animate-zoom-in border"><div className="p-8 border-b bg-slate-50/50 flex justify-between items-center"><h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{activeTab === 'users' ? (editingItem ? 'Cập nhật' : 'Thêm mới') : (editingItem ? 'Cập nhật' : 'Tạo mới')}</h3><button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><X size={24}/></button></div><div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">{activeTab === 'units' ? (<div className="space-y-6"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tên</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} /></div><div className="grid grid-cols-2 gap-5"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Cấp trên</label><select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value || null})}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div></div><div className="p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border"><input type="checkbox" id="chkIncludeInMobile" className="w-5 h-5" checked={formData.includeInMobileReport || false} onChange={e => setFormData({...formData, includeInMobileReport: e.target.checked})} /><label htmlFor="chkIncludeInMobile" className="text-xs font-black text-blue-800 uppercase">Đưa vào điểm tin đánh giá</label></div></div>) : (<div className="grid grid-cols-2 gap-8"><div className="col-span-2 grid grid-cols-2 gap-5"><div className="col-span-2 space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Họ tên</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã HRM</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Username</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} /></div>{!editingItem ? (<div className="space-y-1.5"><label>Mật khẩu</label><input type="password" placeholder="Mặc định: 123" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} /></div>) : (<div className="space-y-1.5"><label>Bảo mật</label><button onClick={handleResetPassword} className="w-full bg-slate-100 text-slate-700 p-3.5 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-slate-200"><KeyRound size={16}/> Reset Password</button></div>)}<div className="space-y-1.5"><label>Chức danh</label><select value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}>{Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}</select></div><div className="space-y-1.5"><label>Đơn vị</label><select value={formData.unitId} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={isSubAdmin && !isSystemAdmin}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>{isSystemAdmin && (<div className="col-span-2 p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border"><input type="checkbox" id="chkSubAdmin" checked={formData.canManageUsers || false} onChange={e => setFormData({...formData, canManageUsers: e.target.checked})} /><label htmlFor="chkSubAdmin">Quyền SubAdmin</label></div>)}</div><div className="col-span-2 space-y-4"><div className="flex items-center gap-2 border-b-2 pb-2"><CheckSquare/><label>Phân quyền xem dữ liệu</label></div><p className="text-[10px] italic">Chọn đơn vị mà nhân sự này được phép xem dữ liệu:</p><div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[250px] overflow-y-auto p-2 border rounded-2xl bg-slate-50">{units.map(u => (<label key={u.id} className="flex items-center gap-2 p-2 hover:bg-white rounded-lg cursor-pointer"><input type="checkbox" checked={(formData.accessibleUnitIds || []).includes(u.id)} onChange={e => {const c=formData.accessibleUnitIds||[];e.target.checked?setFormData({...formData,accessibleUnitIds:[...c,u.id]}):setFormData({...formData,accessibleUnitIds:c.filter((id:string)=>id!==u.id)})}}/><span className="text-[11px] font-bold truncate">{u.name}</span></label>))}</div></div></div>)}</div><div className="p-8 border-t bg-slate-50/50 flex justify-end gap-4"><button onClick={() => setIsModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-xs uppercase">Hủy</button><button onClick={handleSave} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-700 flex items-center gap-2">{isProcessing ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} LƯU</button></div></div></div>)}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-[40px] w-full max-w-4xl shadow-2xl overflow-hidden animate-zoom-in border">
+                <div className="p-8 border-b bg-slate-50/50 flex justify-between items-center">
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{activeTab === 'users' ? (editingItem ? 'Cập nhật' : 'Thêm mới') : (editingItem ? 'Cập nhật' : 'Tạo mới')}</h3>
+                    <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-red-50 text-slate-400 rounded-full"><X size={24}/></button>
+                </div>
+                <div className="p-10 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                    {activeTab === 'units' ? (
+                        <div className="space-y-6"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Tên</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} /></div><div className="grid grid-cols-2 gap-5"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã</label><input className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} /></div><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Cấp trên</label><select className="w-full border-2 p-4 rounded-2xl bg-slate-50 font-bold" value={formData.parentId || ''} onChange={e => setFormData({...formData, parentId: e.target.value || null})}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div></div><div className="p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border"><input type="checkbox" id="chkIncludeInMobile" className="w-5 h-5" checked={formData.includeInMobileReport || false} onChange={e => setFormData({...formData, includeInMobileReport: e.target.checked})} /><label htmlFor="chkIncludeInMobile" className="text-xs font-black text-blue-800 uppercase">Đưa vào điểm tin đánh giá</label></div></div>
+                    ) : (
+                        <div className="grid grid-cols-2 gap-8">
+                            <div className="col-span-2 grid grid-cols-2 gap-5">
+                                <div className="col-span-2 space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Họ tên</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.fullName || ''} onChange={e => setFormData({...formData, fullName: e.target.value})} /></div>
+                                <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Mã HRM</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.hrmCode || ''} onChange={e => setFormData({...formData, hrmCode: e.target.value})} /></div>
+                                <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Username</label><input className="w-full border-2 p-3.5 rounded-2xl bg-slate-50 font-bold" value={formData.username || ''} onChange={e => setFormData({...formData, username: e.target.value})} /></div>
+                                {!editingItem ? (<div className="space-y-1.5"><label>Mật khẩu</label><input type="password" placeholder="Mặc định: 123" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} /></div>) : (<div className="space-y-1.5"><label>Bảo mật</label><button onClick={handleResetPassword} className="w-full bg-slate-100 text-slate-700 p-3.5 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-slate-200"><KeyRound size={16}/> Reset Password</button></div>)}
+                                <div className="space-y-1.5"><label>Chức danh</label><select value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})}>{Object.values(Role).map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+                                <div className="space-y-1.5"><label>Đơn vị</label><select value={formData.unitId} onChange={e => setFormData({...formData, unitId: e.target.value})} disabled={isSubAdmin && !isSystemAdmin}>{units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+                            </div>
+                            
+                            {/* PHÂN QUYỀN MODULE */}
+                            <div className="col-span-2 space-y-4">
+                                <div className="flex items-center gap-2 border-b-2 pb-2"><Layers size={18}/><label className="font-bold text-sm">Cấp quyền sử dụng Module</label></div>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border rounded-2xl bg-slate-50">
+                                    {MODULE_LIST.map(mod => (
+                                        <label key={mod.id} className="flex items-center gap-2 p-2 hover:bg-white rounded-lg cursor-pointer transition-colors">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={(formData.allowedModules || []).includes(mod.id)} 
+                                                onChange={e => {
+                                                    const currentModules = formData.allowedModules || [];
+                                                    if (e.target.checked) {
+                                                        setFormData({ ...formData, allowedModules: [...currentModules, mod.id] });
+                                                    } else {
+                                                        setFormData({ ...formData, allowedModules: currentModules.filter((id: string) => id !== mod.id) });
+                                                    }
+                                                }}
+                                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className="text-xs font-bold text-slate-700">{mod.label}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="col-span-2 space-y-4">
+                                <div className="flex items-center gap-2 border-b-2 pb-2"><CheckSquare size={18}/><label className="font-bold text-sm">Phân quyền xem dữ liệu đơn vị</label></div>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[200px] overflow-y-auto p-4 border rounded-2xl bg-slate-50 custom-scrollbar">
+                                    {units.map(u => (
+                                        <label key={u.id} className="flex items-center gap-2 p-2 hover:bg-white rounded-lg cursor-pointer">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={(formData.accessibleUnitIds || []).includes(u.id)} 
+                                                onChange={e => {
+                                                    const c = formData.accessibleUnitIds || [];
+                                                    e.target.checked ? setFormData({...formData, accessibleUnitIds: [...c, u.id]}) : setFormData({...formData, accessibleUnitIds: c.filter((id:string)=>id!==u.id)})
+                                                }}
+                                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className="text-[11px] font-bold truncate">{u.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <div className="p-8 border-t bg-slate-50/50 flex justify-end gap-4">
+                    <button onClick={() => setIsModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-xs uppercase">Hủy</button>
+                    <button onClick={handleSave} className="bg-blue-600 text-white px-12 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-700 flex items-center gap-2">{isProcessing ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} LƯU</button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };
