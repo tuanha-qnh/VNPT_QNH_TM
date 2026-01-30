@@ -136,7 +136,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         const finalUnitId = (isSubAdmin && !isSystemAdmin) ? currentUser.unitId : (formData.unitId || currentUser.unitId);
         
         // Ensure canManageUsers matches the 'admin' module permission
-        const updatedCanManageUsers = formData.allowedModules?.includes('admin') || formData.canManageUsers;
+        // Logic: If canManageUsers is true, add 'admin' module. If 'admin' module is selected, set canManageUsers true.
+        let allowedModules = formData.allowedModules || [];
+        if (formData.canManageUsers && !allowedModules.includes('admin')) {
+            allowedModules.push('admin');
+        } else if (!formData.canManageUsers && allowedModules.includes('admin')) {
+            // If explicitly unchecked SubAdmin, remove admin module access if it was there solely due to subadmin
+            // However, usually we keep them synced.
+            allowedModules = allowedModules.filter((m: string) => m !== 'admin');
+        }
 
         const payload = { 
             ...formData, 
@@ -144,7 +152,8 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
             password: editingItem ? editingItem.password : md5(formData.password || '123'), 
             isFirstLogin: editingItem ? editingItem.isFirstLogin : true, 
             accessibleUnitIds: formData.accessibleUnitIds && formData.accessibleUnitIds.length > 0 ? formData.accessibleUnitIds : [finalUnitId],
-            canManageUsers: updatedCanManageUsers
+            canManageUsers: formData.canManageUsers,
+            allowedModules: allowedModules
         };
         await dbClient.upsert('users', id, payload);
       }
@@ -164,11 +173,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
   };
 
   const downloadTemplate = () => {
-    const data = [["Họ và tên", "Mã HRM", "Mã đơn vị", "Username", "Mật khẩu", "Chức danh", "Là SubAdmin (Yes/No)"], ["Nguyễn Văn A", "HRM001", "QNH102", "anv", "123", "Chuyên viên", "No"], ["Trần Thị B", "HRM002", "QNH103", "btt", "123", "Trưởng phòng", "Yes"]];
+    const data = [
+        ["Họ và tên", "Mã HRM", "Mã đơn vị", "Username", "Mật khẩu", "Chức danh", "Là SubAdmin (Yes/No)", "Các đơn vị được xem (Mã, cách nhau dấu phẩy)", "Các module được dùng (Mã, cách nhau dấu phẩy)"], 
+        ["Nguyễn Văn A", "HRM001", "QNH102", "anv", "123", "Chuyên viên", "No", "QNH102, QNH103", "tasks, reports, kpi-personal"], 
+        ["Trần Thị B", "HRM002", "QNH103", "btt", "123", "Trưởng phòng", "Yes", "QNH103", "tasks, admin, reports, mobile-ops"]
+    ];
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Template");
-    XLSX.writeFile(wb, "VNPT_Import_NhanSu_Mau.xlsx");
+    XLSX.writeFile(wb, "VNPT_Import_NhanSu_V2.xlsx");
   };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,9 +194,32 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data: any[] = XLSX.utils.sheet_to_json(ws);
         setIsProcessing(true);
+        let importCount = 0;
+        
         for (const row of data) {
-          const unit = units.find(u => u.code === row["Mã đơn vị"]);
+          const unitCode = row["Mã đơn vị"];
+          const unit = units.find(u => u.code === unitCode);
+          
           if (unit && row["Họ và tên"] && row["Mã HRM"] && row["Username"]) {
+            const isSubAdmin = String(row["Là SubAdmin (Yes/No)"]).toLowerCase() === 'yes';
+            
+            // Xử lý Accessible Units
+            let accessibleUnitIds = [unit.id];
+            if (row["Các đơn vị được xem (Mã, cách nhau dấu phẩy)"]) {
+                const codes = String(row["Các đơn vị được xem (Mã, cách nhau dấu phẩy)"]).split(',').map(s => s.trim());
+                const ids = codes.map(c => units.find(u => u.code === c)?.id).filter(id => id) as string[];
+                if (ids.length > 0) accessibleUnitIds = ids;
+            }
+
+            // Xử lý Allowed Modules
+            let allowedModules = ['tasks', 'personal-tasks', 'kpi-personal', 'reports'];
+            if (row["Các module được dùng (Mã, cách nhau dấu phẩy)"]) {
+                const mods = String(row["Các module được dùng (Mã, cách nhau dấu phẩy)"]).split(',').map(s => s.trim());
+                if (mods.length > 0) allowedModules = mods;
+            }
+            // Auto add admin module if subadmin
+            if (isSubAdmin && !allowedModules.includes('admin')) allowedModules.push('admin');
+
             await dbClient.upsert(`user_imp_${row["Mã HRM"]}`, 'users', { 
                 fullName: row["Họ và tên"], 
                 hrmCode: row["Mã HRM"], 
@@ -191,14 +227,15 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                 password: md5(String(row["Mật khẩu"] || '123')), 
                 title: row["Chức danh"], 
                 unitId: unit.id, 
-                canManageUsers: String(row["Là SubAdmin (Yes/No)"]).toLowerCase() === 'yes', 
+                canManageUsers: isSubAdmin, 
                 isFirstLogin: true, 
-                accessibleUnitIds: [unit.id],
-                allowedModules: ['tasks', 'personal-tasks', 'kpi-personal', 'reports'] // Default modules for imported users
+                accessibleUnitIds: accessibleUnitIds,
+                allowedModules: allowedModules
             });
+            importCount++;
           }
         }
-        alert("Import hoàn tất!"); onRefresh();
+        alert(`Import hoàn tất ${importCount} nhân sự!`); onRefresh();
       } catch (err) { alert("Lỗi khi đọc file Excel."); } finally { setIsProcessing(false); }
     };
     reader.readAsBinaryString(file);
@@ -245,6 +282,30 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                             
                             {/* PHÂN QUYỀN MODULE */}
                             <div className="col-span-2 space-y-4">
+                                {/* KHÔI PHỤC CHECKBOX SUBADMIN */}
+                                <div className="p-4 bg-blue-50 rounded-2xl flex items-center gap-3 border mb-4">
+                                    <input 
+                                        type="checkbox" 
+                                        id="chkSubAdmin" 
+                                        className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" 
+                                        checked={formData.canManageUsers || false} 
+                                        onChange={e => {
+                                            const isSub = e.target.checked;
+                                            // Tự động thêm/bớt module 'admin' khi check/uncheck SubAdmin
+                                            let mods = formData.allowedModules || [];
+                                            if (isSub && !mods.includes('admin')) {
+                                                mods = [...mods, 'admin'];
+                                            } else if (!isSub && mods.includes('admin')) {
+                                                mods = mods.filter((m: string) => m !== 'admin');
+                                            }
+                                            setFormData({...formData, canManageUsers: isSub, allowedModules: mods});
+                                        }} 
+                                    />
+                                    <label htmlFor="chkSubAdmin" className="text-xs font-black text-blue-800 uppercase flex items-center gap-2">
+                                        <ShieldCheck size={16}/> Cấp quyền Sub-Admin (Quản trị Nhân sự & Cơ cấu)
+                                    </label>
+                                </div>
+
                                 <div className="flex items-center gap-2 border-b-2 pb-2"><Layers size={18}/><label className="font-bold text-sm">Cấp quyền sử dụng Module</label></div>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border rounded-2xl bg-slate-50">
                                     {MODULE_LIST.map(mod => (
@@ -254,11 +315,20 @@ const Admin: React.FC<AdminProps> = ({ units, users, currentUser, onRefresh }) =
                                                 checked={(formData.allowedModules || []).includes(mod.id)} 
                                                 onChange={e => {
                                                     const currentModules = formData.allowedModules || [];
+                                                    let newModules = [];
                                                     if (e.target.checked) {
-                                                        setFormData({ ...formData, allowedModules: [...currentModules, mod.id] });
+                                                        newModules = [...currentModules, mod.id];
                                                     } else {
-                                                        setFormData({ ...formData, allowedModules: currentModules.filter((id: string) => id !== mod.id) });
+                                                        newModules = currentModules.filter((id: string) => id !== mod.id);
                                                     }
+                                                    
+                                                    // Nếu bỏ check 'admin', tự động bỏ quyền SubAdmin
+                                                    let isSub = formData.canManageUsers;
+                                                    if (mod.id === 'admin') {
+                                                        isSub = e.target.checked;
+                                                    }
+                                                    
+                                                    setFormData({ ...formData, allowedModules: newModules, canManageUsers: isSub });
                                                 }}
                                                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
                                             />
