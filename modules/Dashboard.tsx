@@ -138,7 +138,7 @@ const Dashboard: React.FC<DashboardProps> = ({ tasks, units, users, currentUser,
   // 1. Điểm tin KPI - Lọc theo đơn vị được phép
   const provinceKpi = useMemo(() => {
     const currentMonth = new Date().toISOString().slice(0, 7);
-    const records = groupKpi.filter(r => r.period === currentMonth && r.type === 'group' && (currentUser.username === 'admin' || myAccessibleUnits.includes(units.find(u => u.code === r.entityId || u.name === r.entityId)?.id || '')));
+    const records = groupKpi.filter(r => r.period === currentMonth && r.type === 'group' && (currentUser.username === 'admin' || myAccessibleUnits.includes(units.find(u => u.code === r.entityId)?.id || '')));
     const summary: any = {};
     groupKpiDefs.forEach(def => {
       let t = 0, a = 0;

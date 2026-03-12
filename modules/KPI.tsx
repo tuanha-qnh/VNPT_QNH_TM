@@ -83,10 +83,10 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode, kpiDefinitio
       if (r.period !== selectedMonth || r.type !== mode) return false;
       if (currentUser.username === 'admin') return true;
       if (mode === 'group') {
-          const unit = units.find(u => u.code === r.entityId || u.name === r.entityId);
+          const unit = units.find(u => u.code === r.entityId);
           return unit && myAccessibleUnits.includes(unit.id);
       } else {
-          const user = users.find(u => u.hrmCode === r.entityId || u.fullName === r.entityId || u.username === r.entityId);
+          const user = users.find(u => u.hrmCode === r.entityId);
           return user && (user.id === currentUser.id || myAccessibleUnits.includes(user.unitId));
       }
     });
@@ -184,7 +184,7 @@ const KPI: React.FC<KPIProps> = ({ users, units, currentUser, mode, kpiDefinitio
   const chartData = useMemo(() => {
     const data = kpiRecords.map(r => {
       const t = r.targets[filterKey] || { target: 0, actual: 0 };
-      const name = mode === 'personal' ? (users.find(u => u.hrmCode === r.entityId || u.fullName === r.entityId || u.username === r.entityId)?.fullName || r.entityId) : (units.find(u => u.code === r.entityId || u.name === r.entityId)?.name || r.entityId);
+      const name = mode === 'personal' ? (users.find(u => u.hrmCode === r.entityId)?.fullName || r.entityId) : (units.find(u => u.code === r.entityId)?.name || r.entityId);
       return { name, actual: t.actual, target: t.target, percent: t.target > 0 ? Math.round((t.actual / t.target) * 100) : 0 };
     });
     
